@@ -5,8 +5,7 @@
         id="menu_matriz_almonte_pda_root"
         name="PDA Ventas"
         sequence="90"
-        groups="matriz_almonte_pda_sale_import.group_matriz_almonte_pda_user,
-                matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin"/>
+        groups="matriz_almonte_pda_sale_import.group_matriz_almonte_pda_user,matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin"/>
 
     <!-- Menú: Operaciones -->
     <menuitem
@@ -21,8 +20,7 @@
         parent="menu_matriz_almonte_pda_operations"
         action="action_matriz_almonte_pda_sale_import"
         sequence="10"
-        groups="matriz_almonte_pda_sale_import.group_matriz_almonte_pda_user,
-                matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin"/>
+        groups="matriz_almonte_pda_sale_import.group_matriz_almonte_pda_user,matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin"/>
 
     <menuitem
         id="menu_matriz_almonte_pda_import_lines"

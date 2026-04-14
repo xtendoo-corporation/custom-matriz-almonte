@@ -47,7 +47,7 @@
                             type="object"
                             class="btn-primary"
                             confirm="¿Reintentar el procesamiento de este registro?"
-                            attrs="{'invisible': [('state', '!=', 'error')]}"
+                            invisible="state != 'error'"
                             groups="matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin"/>
                     <field name="state" widget="statusbar"
                            statusbar_visible="draft,received,processed"/>
@@ -87,10 +87,10 @@
                             <field name="currency" readonly="1"/>
                         </group>
                     </group>
-                    <group string="Observaciones" attrs="{'invisible': [('notes', '=', False)]}">
+                    <group string="Observaciones" invisible="not notes">
                         <field name="notes" nolabel="1" readonly="1"/>
                     </group>
-                    <group attrs="{'invisible': [('error_message', '=', False)]}">
+                    <group invisible="not error_message">
                         <group string="Error">
                             <field name="error_message" nolabel="1" readonly="1"
                                    widget="char" class="text-danger"/>
