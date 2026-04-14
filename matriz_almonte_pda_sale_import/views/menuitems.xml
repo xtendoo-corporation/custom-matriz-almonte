@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Menú raíz -->
+    <menuitem
+        id="menu_matriz_almonte_pda_root"
+        name="PDA Ventas"
+        sequence="90"
+        groups="matriz_almonte_pda_sale_import.group_matriz_almonte_pda_user,
+                matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin"/>
+
+    <!-- Menú: Operaciones -->
+    <menuitem
+        id="menu_matriz_almonte_pda_operations"
+        name="Operaciones"
+        parent="menu_matriz_almonte_pda_root"
+        sequence="10"/>
+
+    <menuitem
+        id="menu_matriz_almonte_pda_imports"
+        name="Importaciones Recibidas"
+        parent="menu_matriz_almonte_pda_operations"
+        action="action_matriz_almonte_pda_sale_import"
+        sequence="10"
+        groups="matriz_almonte_pda_sale_import.group_matriz_almonte_pda_user,
+                matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin"/>
+
+    <menuitem
+        id="menu_matriz_almonte_pda_import_lines"
+        name="Líneas de Importación"
+        parent="menu_matriz_almonte_pda_operations"
+        action="action_matriz_almonte_pda_sale_import_line"
+        sequence="20"
+        groups="matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin"/>
+
+    <!-- Menú: Configuración -->
+    <menuitem
+        id="menu_matriz_almonte_pda_config"
+        name="Configuración"
+        parent="menu_matriz_almonte_pda_root"
+        sequence="90"
+        groups="matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin"/>
+
+    <menuitem
+        id="menu_matriz_almonte_pda_tokens"
+        name="Tokens de Acceso API"
+        parent="menu_matriz_almonte_pda_config"
+        action="action_matriz_almonte_api_token"
+        sequence="10"
+        groups="matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin"/>
+</odoo>

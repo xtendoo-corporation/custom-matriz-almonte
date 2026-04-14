@@ -1,0 +1,255 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- ================================================================ -->
+    <!-- VISTAS: matriz.almonte.pda.sale.import (cabecera)                 -->
+    <!-- ================================================================ -->
+
+    <!-- Vista Lista -->
+    <record id="view_matriz_almonte_pda_sale_import_list" model="ir.ui.view">
+        <field name="name">matriz.almonte.pda.sale.import.list</field>
+        <field name="model">matriz.almonte.pda.sale.import</field>
+        <field name="arch" type="xml">
+            <list string="Importaciones PDA"
+                  decoration-danger="state == 'error'"
+                  decoration-warning="state == 'duplicate'"
+                  decoration-success="state == 'processed'"
+                  decoration-muted="state == 'draft'">
+                <field name="name" string="Referencia"/>
+                <field name="external_reference"/>
+                <field name="received_at"/>
+                <field name="operation_datetime" optional="show"/>
+                <field name="device_code"/>
+                <field name="customer_reference"/>
+                <field name="salesperson_code" optional="hide"/>
+                <field name="payment_method" optional="show"/>
+                <field name="total_amount" sum="Total"/>
+                <field name="currency" optional="hide"/>
+                <field name="line_count" string="Líneas"/>
+                <field name="token_id" optional="hide"/>
+                <field name="state" widget="badge"
+                       decoration-danger="state == 'error'"
+                       decoration-warning="state == 'duplicate'"
+                       decoration-success="state == 'processed'"
+                       decoration-info="state == 'received'"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- Vista Formulario -->
+    <record id="view_matriz_almonte_pda_sale_import_form" model="ir.ui.view">
+        <field name="name">matriz.almonte.pda.sale.import.form</field>
+        <field name="model">matriz.almonte.pda.sale.import</field>
+        <field name="arch" type="xml">
+            <form string="Importación PDA">
+                <header>
+                    <button name="action_retry_processing"
+                            string="Reintentar Procesamiento"
+                            type="object"
+                            class="btn-primary"
+                            confirm="¿Reintentar el procesamiento de este registro?"
+                            attrs="{'invisible': [('state', '!=', 'error')]}"
+                            groups="matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin"/>
+                    <field name="state" widget="statusbar"
+                           statusbar_visible="draft,received,processed"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_lines"
+                                type="object"
+                                class="oe_stat_button"
+                                icon="fa-list">
+                            <field name="line_count" string="Líneas" widget="statinfo"/>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" readonly="1"/>
+                        </h1>
+                        <h4>
+                            <field name="external_reference"
+                                   placeholder="Referencia externa de la PDA"
+                                   readonly="1"/>
+                        </h4>
+                    </div>
+                    <group>
+                        <group string="Identificación">
+                            <field name="token_id" readonly="1"/>
+                            <field name="device_code" readonly="1"/>
+                            <field name="received_at" readonly="1"/>
+                            <field name="operation_datetime" readonly="1"/>
+                        </group>
+                        <group string="Operación">
+                            <field name="customer_reference" readonly="1"/>
+                            <field name="salesperson_code" readonly="1"/>
+                            <field name="payment_method" readonly="1"/>
+                            <field name="total_amount" readonly="1"/>
+                            <field name="currency" readonly="1"/>
+                        </group>
+                    </group>
+                    <group string="Observaciones" attrs="{'invisible': [('notes', '=', False)]}">
+                        <field name="notes" nolabel="1" readonly="1"/>
+                    </group>
+                    <group attrs="{'invisible': [('error_message', '=', False)]}">
+                        <group string="Error">
+                            <field name="error_message" nolabel="1" readonly="1"
+                                   widget="char" class="text-danger"/>
+                        </group>
+                    </group>
+                    <!-- Líneas de importación -->
+                    <notebook>
+                        <page string="Líneas" name="lines">
+                            <field name="line_ids" readonly="1">
+                                <list string="Líneas">
+                                    <field name="sequence" widget="handle"/>
+                                    <field name="product_code"/>
+                                    <field name="description"/>
+                                    <field name="qty"/>
+                                    <field name="unit_price"/>
+                                    <field name="discount" string="Dto. (%)"/>
+                                    <field name="line_total" sum="Total Líneas"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Payload Original" name="raw">
+                            <field name="payload_raw" nolabel="1" readonly="1"
+                                   widget="char"
+                                   style="font-family: monospace; white-space: pre-wrap; font-size: 12px;"/>
+                        </page>
+                        <page string="Log de Procesamiento" name="log">
+                            <field name="processing_log" nolabel="1" readonly="1"
+                                   widget="char"
+                                   style="font-family: monospace; white-space: pre-wrap; font-size: 12px;"/>
+                        </page>
+                        <page string="Técnico" name="technical"
+                              groups="base.group_no_one">
+                            <group>
+                                <field name="payload_hash" readonly="1"/>
+                            </group>
+                        </page>
+                    </notebook>
+                </sheet>
+                <div class="oe_chatter">
+                    <field name="message_follower_ids"/>
+                    <field name="activity_ids"/>
+                    <field name="message_ids"/>
+                </div>
+            </form>
+        </field>
+    </record>
+
+    <!-- Vista Búsqueda -->
+    <record id="view_matriz_almonte_pda_sale_import_search" model="ir.ui.view">
+        <field name="name">matriz.almonte.pda.sale.import.search</field>
+        <field name="model">matriz.almonte.pda.sale.import</field>
+        <field name="arch" type="xml">
+            <search string="Buscar Importaciones PDA">
+                <field name="name" string="Referencia Interna"/>
+                <field name="external_reference" string="Referencia Externa"/>
+                <field name="device_code" string="Dispositivo"/>
+                <field name="customer_reference" string="Cliente"/>
+                <field name="payment_method" string="Forma de Pago"/>
+                <field name="token_id" string="Token"/>
+                <separator/>
+                <filter name="filter_error"
+                        string="Con Error"
+                        domain="[('state', '=', 'error')]"/>
+                <filter name="filter_duplicate"
+                        string="Duplicados"
+                        domain="[('state', '=', 'duplicate')]"/>
+                <filter name="filter_received"
+                        string="Pendientes"
+                        domain="[('state', '=', 'received')]"/>
+                <filter name="filter_processed"
+                        string="Procesados"
+                        domain="[('state', '=', 'processed')]"/>
+                <separator/>
+                <filter name="filter_today"
+                        string="Hoy"
+                        domain="[('received_at', '>=', datetime.datetime.combine(context_today(), datetime.time(0,0,0)))]"/>
+                <group expand="0" string="Agrupar por">
+                    <filter name="group_state" string="Estado"
+                            context="{'group_by': 'state'}"/>
+                    <filter name="group_device" string="Dispositivo"
+                            context="{'group_by': 'device_code'}"/>
+                    <filter name="group_payment" string="Forma de Pago"
+                            context="{'group_by': 'payment_method'}"/>
+                    <filter name="group_date" string="Fecha Recepción"
+                            context="{'group_by': 'received_at:day'}"/>
+                    <filter name="group_token" string="Token"
+                            context="{'group_by': 'token_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- Acción ventana -->
+    <record id="action_matriz_almonte_pda_sale_import" model="ir.actions.act_window">
+        <field name="name">Importaciones PDA</field>
+        <field name="res_model">matriz.almonte.pda.sale.import</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_matriz_almonte_pda_sale_import_search"/>
+        <field name="context">{'search_default_filter_received': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Aún no se han recibido operaciones de ninguna PDA
+            </p>
+            <p>
+                Las operaciones aparecerán aquí cuando los dispositivos PDA
+                envíen datos al endpoint API.
+            </p>
+        </field>
+    </record>
+
+    <!-- ================================================================ -->
+    <!-- VISTAS: matriz.almonte.pda.sale.import.line                       -->
+    <!-- ================================================================ -->
+
+    <record id="view_matriz_almonte_pda_sale_import_line_list" model="ir.ui.view">
+        <field name="name">matriz.almonte.pda.sale.import.line.list</field>
+        <field name="model">matriz.almonte.pda.sale.import.line</field>
+        <field name="arch" type="xml">
+            <list string="Líneas de Importación PDA">
+                <field name="import_id" string="Importación"/>
+                <field name="sequence"/>
+                <field name="product_code"/>
+                <field name="description"/>
+                <field name="qty"/>
+                <field name="unit_price"/>
+                <field name="discount" string="Dto. (%)"/>
+                <field name="line_total" sum="Total"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_matriz_almonte_pda_sale_import_line_form" model="ir.ui.view">
+        <field name="name">matriz.almonte.pda.sale.import.line.form</field>
+        <field name="model">matriz.almonte.pda.sale.import.line</field>
+        <field name="arch" type="xml">
+            <form string="Línea de Importación PDA">
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="import_id" readonly="1"/>
+                            <field name="sequence"/>
+                            <field name="product_code"/>
+                            <field name="description"/>
+                        </group>
+                        <group>
+                            <field name="qty"/>
+                            <field name="unit_price"/>
+                            <field name="discount"/>
+                            <field name="line_total"/>
+                        </group>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_matriz_almonte_pda_sale_import_line" model="ir.actions.act_window">
+        <field name="name">Líneas de Importación PDA</field>
+        <field name="res_model">matriz.almonte.pda.sale.import.line</field>
+        <field name="view_mode">list,form</field>
+    </record>
+</odoo>

@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- ================================================================ -->
+    <!-- VISTAS: matriz.almonte.api.token                                  -->
+    <!-- ================================================================ -->
+
+    <!-- Vista Lista -->
+    <record id="view_matriz_almonte_api_token_list" model="ir.ui.view">
+        <field name="name">matriz.almonte.api.token.list</field>
+        <field name="model">matriz.almonte.api.token</field>
+        <field name="arch" type="xml">
+            <list string="Tokens de Acceso API"
+                  decoration-muted="not active">
+                <field name="name"/>
+                <field name="device_code"/>
+                <field name="active" widget="boolean_toggle"/>
+                <field name="last_used_at"/>
+                <field name="import_count" string="Importaciones"/>
+                <field name="create_date" string="Creado"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- Vista Formulario -->
+    <record id="view_matriz_almonte_api_token_form" model="ir.ui.view">
+        <field name="name">matriz.almonte.api.token.form</field>
+        <field name="model">matriz.almonte.api.token</field>
+        <field name="arch" type="xml">
+            <form string="Token de Acceso API">
+                <header>
+                    <button name="action_regenerate_token"
+                            string="Regenerar Token"
+                            type="object"
+                            class="btn-warning"
+                            confirm="¿Seguro? El token actual dejará de funcionar en el dispositivo hasta que lo actualices."
+                            groups="matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_imports"
+                                type="object"
+                                class="oe_stat_button"
+                                icon="fa-upload">
+                            <field name="import_count" string="Importaciones" widget="statinfo"/>
+                        </button>
+                    </div>
+                    <widget name="web_ribbon"
+                            title="Inactivo"
+                            bg_color="text-bg-danger"
+                            attrs="{'invisible': [('active', '=', True)]}"/>
+                    <div class="oe_title">
+                        <label for="name"/>
+                        <h1>
+                            <field name="name" placeholder="Nombre del dispositivo o integración"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group string="Identificación">
+                            <field name="device_code" placeholder="PDA-ANDROID-01"/>
+                            <field name="active"/>
+                        </group>
+                        <group string="Actividad">
+                            <field name="create_date" string="Creado el" readonly="1"/>
+                            <field name="last_used_at" readonly="1"/>
+                        </group>
+                    </group>
+                    <group string="Token de Autenticación"
+                           groups="matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin">
+                        <field name="token"
+                               widget="char"
+                               readonly="1"
+                               password="False"
+                               help="Incluir en la cabecera HTTP: Authorization: Bearer &lt;token&gt;"/>
+                    </group>
+                    <group string="Notas">
+                        <field name="notes" nolabel="1" placeholder="Información adicional sobre este dispositivo..."/>
+                    </group>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- Vista Búsqueda -->
+    <record id="view_matriz_almonte_api_token_search" model="ir.ui.view">
+        <field name="name">matriz.almonte.api.token.search</field>
+        <field name="model">matriz.almonte.api.token</field>
+        <field name="arch" type="xml">
+            <search string="Buscar Tokens">
+                <field name="name" string="Nombre"/>
+                <field name="device_code" string="Código Dispositivo"/>
+                <separator/>
+                <filter name="active" string="Activos" domain="[('active', '=', True)]"/>
+                <filter name="inactive" string="Inactivos" domain="[('active', '=', False)]"/>
+                <group expand="0" string="Agrupar por">
+                    <filter name="group_active" string="Estado"
+                            context="{'group_by': 'active'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- Acción ventana -->
+    <record id="action_matriz_almonte_api_token" model="ir.actions.act_window">
+        <field name="name">Tokens de Acceso API</field>
+        <field name="res_model">matriz.almonte.api.token</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_matriz_almonte_api_token_search"/>
+        <field name="context">{'search_default_active': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Crea el primer token de acceso para una PDA
+            </p>
+            <p>
+                Los tokens permiten que los dispositivos PDA se autentiquen
+                en la API sin necesidad de usuario ni contraseña de Odoo.
+            </p>
+        </field>
+    </record>
+</odoo>

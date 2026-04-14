@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Categoría de seguridad -->
+    <record id="module_category_matriz_almonte_pda" model="ir.module.category">
+        <field name="name">Matriz Almonte - PDA</field>
+        <field name="description">Gestión de importaciones de ventas desde PDAs.</field>
+        <field name="sequence">100</field>
+    </record>
+
+    <!-- Grupo: Administrador PDA -->
+    <record id="group_matriz_almonte_pda_admin" model="res.groups">
+        <field name="name">Administrador PDA</field>
+        <field name="category_id" ref="module_category_matriz_almonte_pda"/>
+        <field name="implied_ids" eval="[(4, ref('base.group_user'))]"/>
+        <field name="comment">
+            Puede gestionar tokens de acceso, ver todas las importaciones y
+            ejecutar acciones de reintento.
+        </field>
+    </record>
+
+    <!-- Grupo: Usuario PDA (solo lectura de importaciones) -->
+    <record id="group_matriz_almonte_pda_user" model="res.groups">
+        <field name="name">Usuario PDA</field>
+        <field name="category_id" ref="module_category_matriz_almonte_pda"/>
+        <field name="implied_ids" eval="[(4, ref('base.group_user'))]"/>
+        <field name="comment">
+            Puede consultar las importaciones recibidas pero no gestionar tokens.
+        </field>
+    </record>
+</odoo>
