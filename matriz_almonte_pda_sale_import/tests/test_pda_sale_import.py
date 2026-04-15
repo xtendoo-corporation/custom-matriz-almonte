@@ -66,6 +66,23 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
         self.assertTrue(self.token.token)
         self.assertGreaterEqual(len(self.token.token), 32)
 
+    def test_01b_token_create_without_token_field_saves_ok(self):
+        """Crear un token pasando solo 'name' (sin 'token') no lanza error.
+
+        Reproduce el comportamiento del formulario web: el usuario rellena
+        solo Nombre y Código de Dispositivo y pulsa Guardar. Odoo no debe
+        mostrar 'Campos no válidos: Token' sino guardar y auto-generar el token.
+        """
+        rec = self.env["matriz.almonte.api.token"].create(
+            {"name": "Token Solo Nombre", "device_code": "PDA-WEB-01"}
+        )
+        # El token debe haberse generado automáticamente
+        self.assertTrue(rec.token, "El token no se generó al guardar sin pasarlo explícitamente.")
+        self.assertGreaterEqual(len(rec.token), 32)
+        # El registro debe ser válido y activo
+        self.assertTrue(rec.active)
+        self.assertEqual(rec.name, "Token Solo Nombre")
+
     def test_02_token_unique_constraint(self):
         """No pueden existir dos tokens con el mismo valor."""
         with self.assertRaises(Exception):

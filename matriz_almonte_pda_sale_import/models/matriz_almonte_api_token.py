@@ -47,7 +47,7 @@ class MatrizAlmonteApiToken(models.Model):
     )
     token = fields.Char(
         string="Token",
-        required=True,
+        required=False,
         copy=False,
         help=(
             "Token de autenticación que debe incluir el dispositivo en la cabecera "
