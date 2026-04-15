@@ -18,33 +18,49 @@ class MatrizAlmontePdaSaleImportLine(models.Model):
         index=True,
     )
     sequence = fields.Integer(
-        string="Secuencia",
-        default=10,
+        string="Nº Línea",
+        default=0,
+        help="Número de línea tal como lo envió la PDA (campo 'numero' del JSON).",
     )
     product_code = fields.Char(
-        string="Código Artículo",
-        help="Código del artículo tal como lo envió la PDA.",
+        string="Cód. Artículo",
+        help="Código del artículo (campo 'id_articulo' del JSON de la PDA).",
     )
     description = fields.Char(
         string="Descripción",
     )
     qty = fields.Float(
-        string="Cantidad",
+        string="Unidades",
         digits=(16, 4),
+        help="Cantidad enviada por la PDA (campo 'unidades'). Puede ser negativa.",
     )
     unit_price = fields.Float(
-        string="Precio Unitario",
+        string="Precio",
         digits=(16, 4),
+        help="Precio unitario (campo 'precio' del JSON de la PDA).",
     )
     discount = fields.Float(
         string="Descuento (%)",
         digits=(5, 2),
         default=0.0,
     )
+    line_uuid = fields.Char(
+        string="UUID Línea",
+        readonly=True,
+        copy=False,
+        help="UUID de la línea enviado por la PDA (campo 'uuid' dentro de cada línea).",
+    )
     line_total = fields.Float(
         string="Total Línea",
         digits=(16, 2),
+        compute="_compute_line_total",
+        store=True,
+        help="Calculado: unidades × precio × (1 - descuento/100).",
     )
+
+    def _compute_line_total(self):
+        for line in self:
+            line.line_total = line.qty * line.unit_price * (1.0 - line.discount / 100.0)
 
     # Campos preparados para fase 2 (mapeo con productos reales)
     # product_id = fields.Many2one('product.product', string='Producto Odoo', ...)

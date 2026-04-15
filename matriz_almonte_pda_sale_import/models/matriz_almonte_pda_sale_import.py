@@ -37,11 +37,16 @@ class MatrizAlmontePdaSaleImport(models.Model):
         help="Referencia interna generada automáticamente por la secuencia.",
     )
     external_reference = fields.Char(
-        string="Referencia Externa",
+        string="UUID Operación (PDA)",
         required=True,
         index=True,
         tracking=True,
-        help="Referencia única enviada por el dispositivo PDA.",
+        help="UUID único de la operación enviado por la PDA (campo 'uuid' del JSON).",
+    )
+    pda_id = fields.Integer(
+        string="ID PDA",
+        readonly=True,
+        help="Identificador numérico interno de la PDA (campo 'id' del JSON).",
     )
     payload_hash = fields.Char(
         string="Hash Payload",
@@ -65,7 +70,7 @@ class MatrizAlmontePdaSaleImport(models.Model):
     operation_datetime = fields.Datetime(
         string="Fecha Operación",
         tracking=True,
-        help="Fecha/hora de la operación según la PDA.",
+        help="Fecha/hora de la operación según la PDA (campo 'fecha_hora' del JSON).",
     )
 
     # ------------------------------------------------------------------
@@ -93,9 +98,9 @@ class MatrizAlmontePdaSaleImport(models.Model):
     # ------------------------------------------------------------------
 
     salesperson_code = fields.Char(
-        string="Código Vendedor",
+        string="Vendedor / Usuario",
         tracking=True,
-        help="Código del agente/vendedor enviado por la PDA.",
+        help="Código del usuario/vendedor enviado por la PDA (campo 'usuario' del JSON).",
     )
     customer_reference = fields.Char(
         string="Referencia Cliente",
@@ -106,6 +111,20 @@ class MatrizAlmontePdaSaleImport(models.Model):
     payment_method = fields.Char(
         string="Forma de Pago",
         tracking=True,
+        help="Código de forma de pago (campo 'fpago' del JSON).",
+    )
+    global_discount = fields.Float(
+        string="Descuento Global (%)",
+        digits=(5, 2),
+        default=0.0,
+        tracking=True,
+        help="Descuento global aplicado a toda la operación (campo 'descuento' del JSON).",
+    )
+    print_ticket = fields.Boolean(
+        string="Imprimir Ticket",
+        default=False,
+        tracking=True,
+        help="Indica si la PDA solicitó imprimir ticket (campo 'imprimir' del JSON).",
     )
     total_amount = fields.Float(
         string="Importe Total",
@@ -221,7 +240,12 @@ class MatrizAlmontePdaSaleImport(models.Model):
         """
         payload_json = json.dumps(payload_dict, sort_keys=True, ensure_ascii=False)
         payload_hash = hashlib.sha256(payload_json.encode()).hexdigest()
-        external_ref = payload_dict.get("external_reference", "")
+        # Soporte tanto para el campo 'uuid' del JSON real como 'external_reference' genérico
+        external_ref = (
+            payload_dict.get("uuid")
+            or payload_dict.get("external_reference")
+            or ""
+        )
 
         # -- Detección de duplicados ----------------------------------------
         # Estrategia: misma external_reference + mismo token.
@@ -262,34 +286,44 @@ class MatrizAlmontePdaSaleImport(models.Model):
                 return hash_dup, True
 
         # -- Parseo de fecha de operación ------------------------------------
+        # Formato de la PDA: "DD/MM/YYYY HH:MM:SS"  (p.ej. "15/02/2024 10:11:15")
+        # Fallback a ISO si viene en otro formato.
         operation_dt = False
-        raw_dt = payload_dict.get("operation_datetime")
+        raw_dt = payload_dict.get("fecha_hora") or payload_dict.get("operation_datetime")
         if raw_dt:
-            try:
-                operation_dt = fields.Datetime.from_string(raw_dt)
-            except Exception:
-                operation_dt = False
+            for fmt in ("%d/%m/%Y %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+                try:
+                    from datetime import datetime as _dt
+                    operation_dt = _dt.strptime(str(raw_dt).strip(), fmt)
+                    break
+                except ValueError:
+                    continue
 
         # -- Construir log de procesamiento ----------------------------------
         log_lines = [
-            f"[RECEIVED] external_reference={external_ref}",
-            f"[RECEIVED] device_code={payload_dict.get('device_code', '')}",
+            f"[RECEIVED] uuid={external_ref}",
+            f"[RECEIVED] usuario={payload_dict.get('usuario', '')}",
             f"[RECEIVED] token={token_rec.name}",
-            f"[RECEIVED] lines={len(payload_dict.get('lines', []))}",
+            f"[RECEIVED] lineas={len(payload_dict.get('lineas', []))}",
+            f"[RECEIVED] fpago={payload_dict.get('fpago', '')}",
+            f"[RECEIVED] descuento={payload_dict.get('descuento', 0)}",
         ]
 
         # -- Crear cabecera --------------------------------------------------
         import_vals = {
             "external_reference": external_ref,
+            "pda_id": int(payload_dict.get("id", 0) or 0),
             "payload_hash": payload_hash,
             "payload_raw": json.dumps(payload_dict, indent=2, ensure_ascii=False),
             "token_id": token_rec.id,
             "device_code": payload_dict.get("device_code", ""),
             "operation_datetime": operation_dt,
-            "salesperson_code": payload_dict.get("salesperson_code", ""),
+            "salesperson_code": str(payload_dict.get("usuario", "")).strip(),
             "customer_reference": payload_dict.get("customer_reference", ""),
-            "payment_method": payload_dict.get("payment_method", ""),
-            "total_amount": float(payload_dict.get("total_amount", 0.0)),
+            "payment_method": str(payload_dict.get("fpago", "")).strip(),
+            "global_discount": float(payload_dict.get("descuento", 0) or 0),
+            "print_ticket": bool(payload_dict.get("imprimir", False)),
+            "total_amount": float(payload_dict.get("total_amount", 0.0) or 0.0),
             "currency": payload_dict.get("currency", "EUR"),
             "notes": payload_dict.get("notes", ""),
             "state": "received",
@@ -299,26 +333,29 @@ class MatrizAlmontePdaSaleImport(models.Model):
         import_rec = self.sudo().create(import_vals)
 
         # -- Crear líneas ---------------------------------------------------
+        # Soporte para el campo "lineas" del JSON real de la PDA.
         line_model = self.env["matriz.almonte.pda.sale.import.line"]
-        for seq_num, line in enumerate(payload_dict.get("lines", []), start=1):
+        raw_lines = payload_dict.get("lineas") or payload_dict.get("lines") or []
+        for line in raw_lines:
             line_model.sudo().create(
                 {
                     "import_id": import_rec.id,
-                    "sequence": seq_num,
-                    "product_code": line.get("product_code", ""),
+                    "sequence": int(line.get("numero", 0) or 0),
+                    "product_code": str(line.get("id_articulo", "") or line.get("product_code", "")).strip(),
                     "description": line.get("description", ""),
-                    "qty": float(line.get("qty", 0)),
-                    "unit_price": float(line.get("unit_price", 0)),
-                    "discount": float(line.get("discount", 0)),
-                    "line_total": float(line.get("line_total", 0)),
+                    "qty": float(line.get("unidades", line.get("qty", 0)) or 0),
+                    "unit_price": float(line.get("precio", line.get("unit_price", 0)) or 0),
+                    "discount": float(line.get("discount", 0) or 0),
+                    "line_uuid": str(line.get("uuid", "") or ""),
+                    "line_total": float(line.get("line_total", 0) or 0),
                 }
             )
 
         _logger.info(
-            "PDA Import: creado import_id=%d external_ref=%s lines=%d",
+            "PDA Import: creado import_id=%d uuid=%s lineas=%d",
             import_rec.id,
             external_ref,
-            len(payload_dict.get("lines", [])),
+            len(raw_lines),
         )
         return import_rec, False
 

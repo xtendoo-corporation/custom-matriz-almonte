@@ -15,15 +15,14 @@
                   decoration-success="state == 'processed'"
                   decoration-muted="state == 'draft'">
                 <field name="name" string="Referencia"/>
-                <field name="external_reference"/>
+                <field name="external_reference" string="UUID PDA"/>
                 <field name="received_at"/>
                 <field name="operation_datetime" optional="show"/>
-                <field name="device_code"/>
-                <field name="customer_reference"/>
-                <field name="salesperson_code" optional="hide"/>
-                <field name="payment_method" optional="show"/>
+                <field name="salesperson_code" string="Usuario" optional="show"/>
+                <field name="payment_method" string="F.Pago" optional="show"/>
+                <field name="global_discount" string="Dto.%" optional="hide"/>
+                <field name="print_ticket" optional="hide"/>
                 <field name="total_amount" sum="Total"/>
-                <field name="currency" optional="hide"/>
                 <field name="line_count" string="Líneas"/>
                 <field name="token_id" optional="hide"/>
                 <field name="state" widget="badge"
@@ -68,21 +67,22 @@
                         </h1>
                         <h4>
                             <field name="external_reference"
-                                   placeholder="Referencia externa de la PDA"
+                                   placeholder="UUID de la operación PDA"
                                    readonly="1"/>
                         </h4>
                     </div>
                     <group>
-                        <group string="Identificación">
+                        <group string="Identificación PDA">
                             <field name="token_id" readonly="1"/>
-                            <field name="device_code" readonly="1"/>
+                            <field name="pda_id" readonly="1"/>
                             <field name="received_at" readonly="1"/>
                             <field name="operation_datetime" readonly="1"/>
                         </group>
                         <group string="Operación">
-                            <field name="customer_reference" readonly="1"/>
                             <field name="salesperson_code" readonly="1"/>
                             <field name="payment_method" readonly="1"/>
+                            <field name="global_discount" readonly="1"/>
+                            <field name="print_ticket" readonly="1"/>
                             <field name="total_amount" readonly="1"/>
                             <field name="currency" readonly="1"/>
                         </group>
@@ -101,13 +101,14 @@
                         <page string="Líneas" name="lines">
                             <field name="line_ids" readonly="1">
                                 <list string="Líneas">
-                                    <field name="sequence" widget="handle"/>
-                                    <field name="product_code"/>
+                                    <field name="sequence" string="Nº"/>
+                                    <field name="product_code" string="Artículo"/>
                                     <field name="description"/>
-                                    <field name="qty"/>
-                                    <field name="unit_price"/>
+                                    <field name="qty" string="Unidades"/>
+                                    <field name="unit_price" string="Precio"/>
                                     <field name="discount" string="Dto. (%)"/>
-                                    <field name="line_total" sum="Total Líneas"/>
+                                    <field name="line_uuid" optional="hide"/>
+                                    <field name="line_total" sum="Total"/>
                                 </list>
                             </field>
                         </page>

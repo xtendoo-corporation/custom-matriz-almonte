@@ -23,8 +23,8 @@ _logger = logging.getLogger(__name__)
 # Constantes de validación
 # ---------------------------------------------------------------------------
 
-_REQUIRED_ROOT_FIELDS = {"external_reference", "lines"}
-_REQUIRED_LINE_FIELDS = {"product_code", "qty", "unit_price"}
+_REQUIRED_ROOT_FIELDS = {"uuid", "lineas"}
+_REQUIRED_LINE_FIELDS = {"id_articulo", "unidades", "precio"}
 
 _MAX_PAYLOAD_BYTES = 512 * 1024  # 512 KB — protección contra payloads enormes
 
@@ -165,7 +165,7 @@ class MatrizAlmontePdaSaleImportController(http.Controller):
         if validation_error:
             return _error("VALIDATION_ERROR", validation_error)
 
-        external_ref = payload.get("external_reference", "")
+        external_ref = payload.get("uuid") or payload.get("external_reference") or ""
 
         # ------------------------------------------------------------------ #
         # 4–5. Crear o detectar duplicado                                     #
@@ -234,49 +234,62 @@ class MatrizAlmontePdaSaleImportController(http.Controller):
     def _validate_payload(payload):
         """Valida la estructura mínima del payload.
 
+        Soporta el formato real de la PDA:
+            - ``uuid``        → referencia única de la operación
+            - ``lineas``      → lista de líneas (cada una con id_articulo, unidades, precio)
+
+        También acepta el formato genérico de tests:
+            - ``external_reference`` / ``lines`` / ``product_code`` / ``qty`` / ``unit_price``
+
         :returns: mensaje de error (str) si hay problema, o None si es válido.
         """
-        # Campos raíz obligatorios
-        for field in _REQUIRED_ROOT_FIELDS:
-            if field not in payload:
-                return f"Campo obligatorio ausente: '{field}'."
-            if payload[field] is None or payload[field] == "":
-                return f"Campo obligatorio vacío: '{field}'."
+        # ----- Campos raíz obligatorios -----------------------------------
+        # Soportar tanto el formato PDA real como el genérico de tests
+        has_uuid = bool(payload.get("uuid") or payload.get("external_reference"))
+        if not has_uuid:
+            return "Campo obligatorio ausente: 'uuid' (o 'external_reference')."
 
-        # external_reference no vacío ya se comprobó arriba
-        ext_ref = payload.get("external_reference", "")
+        ext_ref = payload.get("uuid") or payload.get("external_reference") or ""
         if not isinstance(ext_ref, str) or not ext_ref.strip():
-            return "El campo 'external_reference' debe ser una cadena no vacía."
+            return "El campo 'uuid' debe ser una cadena no vacía."
 
-        # lines debe ser lista no vacía
-        lines = payload.get("lines")
+        # Soportar tanto 'lineas' (PDA real) como 'lines' (genérico)
+        lines = payload.get("lineas") or payload.get("lines")
+        if lines is None:
+            return "Campo obligatorio ausente: 'lineas'."
         if not isinstance(lines, list):
-            return "El campo 'lines' debe ser una lista."
+            return "El campo 'lineas' debe ser una lista."
         if len(lines) == 0:
-            return "El campo 'lines' no puede estar vacío."
+            return "El campo 'lineas' no puede estar vacío."
 
-        # Validar cada línea
+        # ----- Validar cada línea -----------------------------------------
         for idx, line in enumerate(lines, start=1):
             if not isinstance(line, dict):
                 return f"La línea {idx} no es un objeto JSON válido."
 
-            for lf in _REQUIRED_LINE_FIELDS:
-                if lf not in line:
-                    return f"Línea {idx}: campo obligatorio ausente '{lf}'."
+            # Soportar tanto el formato PDA real como el genérico
+            art_code = line.get("id_articulo") or line.get("product_code")
+            if not art_code and art_code != 0:
+                return f"Línea {idx}: campo obligatorio ausente 'id_articulo'."
 
+            # unidades / qty: acepta negativos y cero (el JSON real los usa)
+            qty_raw = line.get("unidades") if "unidades" in line else line.get("qty")
+            if qty_raw is None:
+                return f"Línea {idx}: campo obligatorio ausente 'unidades'."
             try:
-                qty = float(line.get("qty", 0))
+                float(qty_raw)
             except (TypeError, ValueError):
-                return f"Línea {idx}: 'qty' debe ser un número."
-            if qty <= 0:
-                return f"Línea {idx}: 'qty' debe ser mayor que cero (recibido: {qty})."
+                return f"Línea {idx}: 'unidades' debe ser un número."
 
+            price_raw = line.get("precio") if "precio" in line else line.get("unit_price")
+            if price_raw is None:
+                return f"Línea {idx}: campo obligatorio ausente 'precio'."
             try:
-                unit_price = float(line.get("unit_price", 0))
+                unit_price = float(price_raw)
             except (TypeError, ValueError):
-                return f"Línea {idx}: 'unit_price' debe ser un número."
+                return f"Línea {idx}: 'precio' debe ser un número."
             if unit_price < 0:
-                return f"Línea {idx}: 'unit_price' no puede ser negativo."
+                return f"Línea {idx}: 'precio' no puede ser negativo."
 
             discount = line.get("discount", 0)
             if discount is not None:

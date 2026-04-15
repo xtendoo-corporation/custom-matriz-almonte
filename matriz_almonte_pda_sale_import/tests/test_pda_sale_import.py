@@ -1,41 +1,44 @@
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0)
 """Tests del módulo matriz_almonte_pda_sale_import."""
 import json
-from datetime import datetime
 
 from odoo.tests.common import TransactionCase
 from odoo.exceptions import ValidationError
 
 
 # ---------------------------------------------------------------------------
-# Payload de referencia
+# Payload de referencia — formato real de la PDA
 # ---------------------------------------------------------------------------
 PAYLOAD_OK = {
-    "external_reference": "PDA-TEST-0001",
-    "operation_datetime": "2026-04-14 10:35:00",
-    "device_code": "PDA-ANDROID-01",
-    "salesperson_code": "AGENTE-01",
-    "customer_reference": "CLI-00023",
-    "payment_method": "cash",
-    "total_amount": 7.50,
-    "currency": "EUR",
-    "notes": "Test payload",
-    "lines": [
+    "id": 1,
+    "usuario": "000",
+    "fecha_hora": "15/02/2024 10:11:15",
+    "numero_lineas": 3,
+    "uuid": "9d71fd5e-c878-4f86-bfbc-febe632ff4f8",
+    "imprimir": False,
+    "descuento": 0,
+    "fpago": "00",
+    "lineas": [
         {
-            "product_code": "ART-001",
-            "description": "Coca-Cola 33cl",
-            "qty": 2,
-            "unit_price": 1.50,
-            "discount": 0,
-            "line_total": 3.00,
+            "numero": 1,
+            "id_articulo": "0307196",
+            "unidades": -552,
+            "precio": 2.42,
+            "uuid": "1847731c-3581-4263-9bbb-7c4d66d972d3",
         },
         {
-            "product_code": "ART-002",
-            "description": "Bocadillo jamón",
-            "qty": 1,
-            "unit_price": 4.50,
-            "discount": 0,
-            "line_total": 4.50,
+            "numero": 2,
+            "id_articulo": "0307198",
+            "unidades": -408,
+            "precio": 2.42,
+            "uuid": "1847731c-3581-4263-9bbb-7c4d66d972d3",
+        },
+        {
+            "numero": 3,
+            "id_articulo": "0307187",
+            "unidades": 10,
+            "precio": 2.42,
+            "uuid": "1847731c-3581-4263-9bbb-7c4d66d972d3",
         },
     ],
 }
@@ -96,7 +99,6 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
 
     def test_07_authenticate_updates_last_used_at(self):
         """authenticate() actualiza last_used_at."""
-        before = self.token.last_used_at
         self.env["matriz.almonte.api.token"].authenticate(self.token.token)
         self.assertIsNotNone(self.token.last_used_at)
 
@@ -111,22 +113,22 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
         ].create_from_payload(PAYLOAD_OK, self.token)
         self.assertFalse(is_dup)
         self.assertEqual(import_rec.state, "received")
-        self.assertEqual(import_rec.external_reference, "PDA-TEST-0001")
+        self.assertEqual(import_rec.external_reference, "9d71fd5e-c878-4f86-bfbc-febe632ff4f8")
         self.assertEqual(import_rec.token_id, self.token)
-        self.assertEqual(len(import_rec.line_ids), 2)
+        self.assertEqual(len(import_rec.line_ids), 3)
 
     def test_09_sequence_name_assigned(self):
         """El campo name recibe el valor de la secuencia."""
-        payload = dict(PAYLOAD_OK, external_reference="PDA-TEST-SEQ-001")
+        payload = dict(PAYLOAD_OK, uuid="UUID-SEQ-TEST-001")
         import_rec, _ = self.env[
             "matriz.almonte.pda.sale.import"
         ].create_from_payload(payload, self.token)
         self.assertNotEqual(import_rec.name, "Nuevo")
         self.assertIn("PDA-IMP/", import_rec.name)
 
-    def test_10_duplicate_detection_same_external_ref_same_token(self):
-        """El mismo external_reference + mismo token se detecta como duplicado."""
-        payload = dict(PAYLOAD_OK, external_reference="PDA-TEST-DUP-001")
+    def test_10_duplicate_detection_same_uuid_same_token(self):
+        """El mismo uuid + mismo token se detecta como duplicado."""
+        payload = dict(PAYLOAD_OK, uuid="UUID-DUP-TEST-001")
         rec1, is_dup1 = self.env[
             "matriz.almonte.pda.sale.import"
         ].create_from_payload(payload, self.token)
@@ -143,7 +145,7 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
         token2 = self.env["matriz.almonte.api.token"].create(
             {"name": "Token Test 2"}
         )
-        payload = dict(PAYLOAD_OK, external_reference="PDA-TEST-HASH-001")
+        payload = dict(PAYLOAD_OK, uuid="UUID-HASH-TEST-001")
         rec1, is_dup1 = self.env[
             "matriz.almonte.pda.sale.import"
         ].create_from_payload(payload, self.token)
@@ -155,30 +157,31 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
         self.assertTrue(is_dup2)
 
     def test_12_line_fields_stored(self):
-        """Los campos de las líneas se almacenan correctamente."""
-        payload = dict(PAYLOAD_OK, external_reference="PDA-TEST-LINES-001")
+        """Los campos de las líneas se almacenan correctamente desde el JSON PDA."""
+        payload = dict(PAYLOAD_OK, uuid="UUID-LINES-TEST-001")
         import_rec, _ = self.env[
             "matriz.almonte.pda.sale.import"
         ].create_from_payload(payload, self.token)
-        line = import_rec.line_ids[0]
-        self.assertEqual(line.product_code, "ART-001")
-        self.assertAlmostEqual(line.qty, 2.0)
-        self.assertAlmostEqual(line.unit_price, 1.50)
-        self.assertAlmostEqual(line.line_total, 3.00)
+        # Ordenar por sequence para acceder a la primera línea
+        first_line = import_rec.line_ids.sorted("sequence")[0]
+        self.assertEqual(first_line.product_code, "0307196")
+        self.assertAlmostEqual(first_line.qty, -552.0)
+        self.assertAlmostEqual(first_line.unit_price, 2.42)
+        self.assertEqual(first_line.line_uuid, "1847731c-3581-4263-9bbb-7c4d66d972d3")
 
     def test_13_payload_raw_stored(self):
         """El payload JSON original se almacena en payload_raw."""
-        payload = dict(PAYLOAD_OK, external_reference="PDA-TEST-RAW-001")
+        payload = dict(PAYLOAD_OK, uuid="UUID-RAW-TEST-001")
         import_rec, _ = self.env[
             "matriz.almonte.pda.sale.import"
         ].create_from_payload(payload, self.token)
         self.assertTrue(import_rec.payload_raw)
         parsed = json.loads(import_rec.payload_raw)
-        self.assertEqual(parsed["external_reference"], "PDA-TEST-RAW-001")
+        self.assertEqual(parsed["uuid"], "UUID-RAW-TEST-001")
 
     def test_14_payload_hash_computed(self):
         """Se calcula y almacena el hash SHA-256 del payload."""
-        payload = dict(PAYLOAD_OK, external_reference="PDA-TEST-HASH-CHK-001")
+        payload = dict(PAYLOAD_OK, uuid="UUID-HASH-CHK-001")
         import_rec, _ = self.env[
             "matriz.almonte.pda.sale.import"
         ].create_from_payload(payload, self.token)
@@ -187,7 +190,7 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
 
     def test_15_retry_sets_state_received(self):
         """action_retry_processing() cambia el estado de error a received."""
-        payload = dict(PAYLOAD_OK, external_reference="PDA-TEST-RETRY-001")
+        payload = dict(PAYLOAD_OK, uuid="UUID-RETRY-TEST-001")
         import_rec, _ = self.env[
             "matriz.almonte.pda.sale.import"
         ].create_from_payload(payload, self.token)
@@ -196,6 +199,38 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
         import_rec.action_retry_processing()
         self.assertEqual(import_rec.state, "received")
         self.assertFalse(import_rec.error_message)
+
+    def test_16_pda_fields_mapped(self):
+        """Los campos específicos de la PDA se mapean correctamente."""
+        payload = dict(PAYLOAD_OK, uuid="UUID-FIELDS-TEST-001")
+        import_rec, _ = self.env[
+            "matriz.almonte.pda.sale.import"
+        ].create_from_payload(payload, self.token)
+        self.assertEqual(import_rec.salesperson_code, "000")
+        self.assertEqual(import_rec.payment_method, "00")
+        self.assertAlmostEqual(import_rec.global_discount, 0.0)
+        self.assertFalse(import_rec.print_ticket)
+        self.assertEqual(import_rec.pda_id, 1)
+
+    def test_17_fecha_hora_parsed(self):
+        """La fecha en formato DD/MM/YYYY HH:MM:SS se parsea correctamente."""
+        payload = dict(PAYLOAD_OK, uuid="UUID-DATE-TEST-001")
+        import_rec, _ = self.env[
+            "matriz.almonte.pda.sale.import"
+        ].create_from_payload(payload, self.token)
+        self.assertIsNotNone(import_rec.operation_datetime)
+        self.assertEqual(import_rec.operation_datetime.day, 15)
+        self.assertEqual(import_rec.operation_datetime.month, 2)
+        self.assertEqual(import_rec.operation_datetime.year, 2024)
+
+    def test_18_negative_units_accepted(self):
+        """Las unidades negativas (ajuste de inventario) se almacenan correctamente."""
+        payload = dict(PAYLOAD_OK, uuid="UUID-NEG-TEST-001")
+        import_rec, _ = self.env[
+            "matriz.almonte.pda.sale.import"
+        ].create_from_payload(payload, self.token)
+        negative_lines = import_rec.line_ids.filtered(lambda l: l.qty < 0)
+        self.assertTrue(negative_lines)
 
     # ------------------------------------------------------------------
     # Tests del validador de payload (capa de lógica pura)
@@ -207,45 +242,48 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
         )
         return MatrizAlmontePdaSaleImportController._validate_payload(payload)
 
-    def test_16_validate_ok(self):
+    def test_19_validate_ok(self):
         """Un payload bien formado no genera errores."""
         self.assertIsNone(self._validate(PAYLOAD_OK))
 
-    def test_17_validate_missing_external_reference(self):
-        """Falta external_reference → error."""
-        payload = {k: v for k, v in PAYLOAD_OK.items() if k != "external_reference"}
+    def test_20_validate_missing_uuid(self):
+        """Falta uuid → error."""
+        payload = {k: v for k, v in PAYLOAD_OK.items() if k != "uuid"}
         self.assertIsNotNone(self._validate(payload))
 
-    def test_18_validate_missing_lines(self):
-        """Falta lines → error."""
-        payload = {k: v for k, v in PAYLOAD_OK.items() if k != "lines"}
+    def test_21_validate_missing_lineas(self):
+        """Falta lineas → error."""
+        payload = {k: v for k, v in PAYLOAD_OK.items() if k != "lineas"}
         self.assertIsNotNone(self._validate(payload))
 
-    def test_19_validate_empty_lines(self):
-        """lines vacío → error."""
-        payload = dict(PAYLOAD_OK, lines=[])
+    def test_22_validate_empty_lineas(self):
+        """lineas vacío → error."""
+        payload = dict(PAYLOAD_OK, lineas=[])
         self.assertIsNotNone(self._validate(payload))
 
-    def test_20_validate_line_missing_product_code(self):
-        """Línea sin product_code → error."""
-        bad_line = {"qty": 1, "unit_price": 1.0}
-        payload = dict(PAYLOAD_OK, lines=[bad_line])
+    def test_23_validate_line_missing_id_articulo(self):
+        """Línea sin id_articulo → error."""
+        bad_line = {"unidades": 1, "precio": 1.0, "uuid": "xxx", "numero": 1}
+        payload = dict(PAYLOAD_OK, lineas=[bad_line])
         self.assertIsNotNone(self._validate(payload))
 
-    def test_21_validate_line_qty_zero(self):
-        """Línea con qty=0 → error."""
-        bad_line = {"product_code": "X", "qty": 0, "unit_price": 1.0}
-        payload = dict(PAYLOAD_OK, lines=[bad_line])
+    def test_24_validate_line_missing_unidades(self):
+        """Línea sin unidades → error."""
+        bad_line = {"id_articulo": "X", "precio": 1.0, "uuid": "xxx", "numero": 1}
+        payload = dict(PAYLOAD_OK, lineas=[bad_line])
         self.assertIsNotNone(self._validate(payload))
 
-    def test_22_validate_line_negative_price(self):
+    def test_25_validate_line_negative_price(self):
         """Precio negativo → error."""
-        bad_line = {"product_code": "X", "qty": 1, "unit_price": -1.0}
-        payload = dict(PAYLOAD_OK, lines=[bad_line])
+        bad_line = {"id_articulo": "X", "unidades": 1, "precio": -1.0, "uuid": "x", "numero": 1}
+        payload = dict(PAYLOAD_OK, lineas=[bad_line])
         self.assertIsNotNone(self._validate(payload))
 
-    def test_23_validate_discount_out_of_range(self):
+    def test_26_validate_discount_out_of_range(self):
         """Descuento > 100 → error."""
-        bad_line = {"product_code": "X", "qty": 1, "unit_price": 1.0, "discount": 110}
-        payload = dict(PAYLOAD_OK, lines=[bad_line])
+        bad_line = {
+            "id_articulo": "X", "unidades": 1, "precio": 1.0,
+            "discount": 110, "uuid": "x", "numero": 1
+        }
+        payload = dict(PAYLOAD_OK, lineas=[bad_line])
         self.assertIsNotNone(self._validate(payload))
