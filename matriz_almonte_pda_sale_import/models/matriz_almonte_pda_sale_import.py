@@ -129,7 +129,11 @@ class MatrizAlmontePdaSaleImport(models.Model):
     total_amount = fields.Float(
         string="Importe Total",
         digits=(16, 2),
+        compute="_compute_total_amount",
+        store=True,
+        readonly=False,
         tracking=True,
+        help="Suma de los totales de todas las líneas (qty × precio × (1 - dto/100)).",
     )
     currency = fields.Char(
         string="Moneda",
@@ -207,6 +211,11 @@ class MatrizAlmontePdaSaleImport(models.Model):
     # ------------------------------------------------------------------
     # Compute
     # ------------------------------------------------------------------
+
+    @api.depends("line_ids.line_total")
+    def _compute_total_amount(self):
+        for rec in self:
+            rec.total_amount = sum(rec.line_ids.mapped("line_total"))
 
     def _compute_line_count(self):
         for rec in self:
@@ -323,7 +332,6 @@ class MatrizAlmontePdaSaleImport(models.Model):
             "payment_method": str(payload_dict.get("fpago", "")).strip(),
             "global_discount": float(payload_dict.get("descuento", 0) or 0),
             "print_ticket": bool(payload_dict.get("imprimir", False)),
-            "total_amount": float(payload_dict.get("total_amount", 0.0) or 0.0),
             "currency": payload_dict.get("currency", "EUR"),
             "notes": payload_dict.get("notes", ""),
             "state": "received",
@@ -351,11 +359,21 @@ class MatrizAlmontePdaSaleImport(models.Model):
                 }
             )
 
+        # Calcular y persistir el total sumando los totales de línea
+        total = sum(
+            float(line.get("unidades", line.get("qty", 0)) or 0)
+            * float(line.get("precio", line.get("unit_price", 0)) or 0)
+            * (1.0 - float(line.get("discount", 0) or 0) / 100.0)
+            for line in raw_lines
+        )
+        import_rec.sudo().write({"total_amount": total})
+
         _logger.info(
-            "PDA Import: creado import_id=%d uuid=%s lineas=%d",
+            "PDA Import: creado import_id=%d uuid=%s lineas=%d total=%.2f",
             import_rec.id,
             external_ref,
             len(raw_lines),
+            total,
         )
         return import_rec, False
 
