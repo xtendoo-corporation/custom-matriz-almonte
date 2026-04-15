@@ -65,12 +65,20 @@
                         </group>
                     </group>
                     <group string="Token de Autenticación"
+                           invisible="not id"
                            groups="matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin">
                         <field name="token"
                                widget="char"
                                readonly="1"
                                password="False"
-                               help="Incluir en la cabecera HTTP: Authorization: Bearer &lt;token&gt;"/>
+                               help="Incluir en la cabecera HTTP: Authorization: Bearer &lt;token&gt;. Se genera automáticamente al guardar."/>
+                    </group>
+                    <group string="Token de Autenticación"
+                           invisible="id"
+                           groups="matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin">
+                        <div class="text-muted">
+                            <i class="fa fa-info-circle"/> El token se generará automáticamente al guardar el registro.
+                        </div>
                     </group>
                     <group string="Notas">
                         <field name="notes" nolabel="1" placeholder="Información adicional sobre este dispositivo..."/>
