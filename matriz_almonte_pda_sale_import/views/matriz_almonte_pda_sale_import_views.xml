@@ -13,6 +13,7 @@
                   decoration-danger="state == 'error'"
                   decoration-warning="state == 'duplicate'"
                   decoration-success="state == 'processed'"
+                  decoration-info="state == 'received'"
                   decoration-muted="state == 'draft'">
                 <field name="name" string="Referencia"/>
                 <field name="external_reference" string="UUID PDA"/>
@@ -60,6 +61,18 @@
                             <field name="line_count" string="Líneas" widget="statinfo"/>
                         </button>
                     </div>
+                    <widget name="web_ribbon"
+                            title="Error"
+                            bg_color="text-bg-danger"
+                            invisible="state != 'error'"/>
+                    <widget name="web_ribbon"
+                            title="Duplicado"
+                            bg_color="text-bg-warning"
+                            invisible="state != 'duplicate'"/>
+                    <widget name="web_ribbon"
+                            title="Procesado"
+                            bg_color="text-bg-success"
+                            invisible="state != 'processed'"/>
                     <div class="oe_title">
                         <label for="name"/>
                         <h1>
@@ -72,14 +85,16 @@
                         </h4>
                     </div>
                     <group>
-                        <group string="Identificación PDA">
+                        <group string="Recepción y Dispositivo">
                             <field name="token_id" readonly="1"/>
                             <field name="pda_id" readonly="1"/>
+                            <field name="device_code" readonly="1"/>
                             <field name="received_at" readonly="1"/>
                             <field name="operation_datetime" readonly="1"/>
                         </group>
                         <group string="Operación">
                             <field name="salesperson_code" readonly="1"/>
+                            <field name="customer_reference" readonly="1"/>
                             <field name="payment_method" readonly="1"/>
                             <field name="global_discount" readonly="1"/>
                             <field name="print_ticket" readonly="1"/>
@@ -87,14 +102,11 @@
                             <field name="currency" readonly="1"/>
                         </group>
                     </group>
+                    <group string="Error de Procesamiento" invisible="not error_message">
+                        <field name="error_message" nolabel="1" readonly="1" class="text-danger"/>
+                    </group>
                     <group string="Observaciones" invisible="not notes">
                         <field name="notes" nolabel="1" readonly="1"/>
-                    </group>
-                    <group invisible="not error_message">
-                        <group string="Error">
-                            <field name="error_message" nolabel="1" readonly="1"
-                                   widget="char" class="text-danger"/>
-                        </group>
                     </group>
                     <!-- Líneas de importación -->
                     <notebook>
@@ -114,12 +126,10 @@
                         </page>
                         <page string="Payload Original" name="raw">
                             <field name="payload_raw" nolabel="1" readonly="1"
-                                   widget="char"
                                    style="font-family: monospace; white-space: pre-wrap; font-size: 12px;"/>
                         </page>
                         <page string="Log de Procesamiento" name="log">
                             <field name="processing_log" nolabel="1" readonly="1"
-                                   widget="char"
                                    style="font-family: monospace; white-space: pre-wrap; font-size: 12px;"/>
                         </page>
                         <page string="Técnico" name="technical"
@@ -131,9 +141,9 @@
                     </notebook>
                 </sheet>
                 <div class="oe_chatter">
-                    <field name="message_follower_ids"/>
-                    <field name="activity_ids"/>
-                    <field name="message_ids"/>
+                    <field name="message_follower_ids" widget="mail_followers"/>
+                    <field name="activity_ids" widget="mail_activity"/>
+                    <field name="message_ids" widget="mail_thread"/>
                 </div>
             </form>
         </field>
@@ -144,40 +154,40 @@
         <field name="name">matriz.almonte.pda.sale.import.search</field>
         <field name="model">matriz.almonte.pda.sale.import</field>
         <field name="arch" type="xml">
-            <search string="Buscar Importaciones PDA">
+            <search string="Buscar importaciones PDA">
                 <field name="name" string="Referencia Interna"/>
-                <field name="external_reference" string="Referencia Externa"/>
-                <field name="device_code" string="Dispositivo"/>
-                <field name="customer_reference" string="Cliente"/>
+                <field name="external_reference" string="UUID operación"/>
+                <field name="device_code" string="Código Dispositivo"/>
+                <field name="customer_reference" string="Referencia Cliente"/>
                 <field name="payment_method" string="Forma de Pago"/>
-                <field name="token_id" string="Token"/>
+                <field name="token_id" string="Token API"/>
                 <separator/>
                 <filter name="filter_error"
-                        string="Con Error"
+                        string="Errores"
                         domain="[('state', '=', 'error')]"/>
                 <filter name="filter_duplicate"
-                        string="Duplicados"
+                        string="Duplicadas"
                         domain="[('state', '=', 'duplicate')]"/>
                 <filter name="filter_received"
-                        string="Pendientes"
+                        string="Recibidas"
                         domain="[('state', '=', 'received')]"/>
                 <filter name="filter_processed"
-                        string="Procesados"
+                        string="Procesadas"
                         domain="[('state', '=', 'processed')]"/>
                 <separator/>
                 <filter name="filter_today"
-                        string="Hoy"
+                        string="Recibidas Hoy"
                         domain="[('received_at', '>=', datetime.datetime.combine(context_today(), datetime.time(0,0,0)))]"/>
                 <group expand="0" string="Agrupar por">
                     <filter name="group_state" string="Estado"
                             context="{'group_by': 'state'}"/>
-                    <filter name="group_device" string="Dispositivo"
+                    <filter name="group_device" string="Código Dispositivo"
                             context="{'group_by': 'device_code'}"/>
                     <filter name="group_payment" string="Forma de Pago"
                             context="{'group_by': 'payment_method'}"/>
-                    <filter name="group_date" string="Fecha Recepción"
+                    <filter name="group_date" string="Fecha de Recepción"
                             context="{'group_by': 'received_at:day'}"/>
-                    <filter name="group_token" string="Token"
+                    <filter name="group_token" string="Token API"
                             context="{'group_by': 'token_id'}"/>
                 </group>
             </search>
@@ -193,11 +203,11 @@
         <field name="context">{'search_default_filter_received': 1}</field>
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">
-                Aún no se han recibido operaciones de ninguna PDA
+                Aún no se han recibido importaciones desde ninguna PDA
             </p>
             <p>
-                Las operaciones aparecerán aquí cuando los dispositivos PDA
-                envíen datos al endpoint API.
+                Las importaciones recibidas aparecerán aquí cuando los
+                dispositivos PDA envíen datos al endpoint API.
             </p>
         </field>
     </record>
@@ -212,12 +222,13 @@
         <field name="arch" type="xml">
             <list string="Líneas de Importación PDA">
                 <field name="import_id" string="Importación"/>
-                <field name="sequence"/>
-                <field name="product_code"/>
+                <field name="sequence" string="Nº"/>
+                <field name="product_code" string="Artículo"/>
                 <field name="description"/>
-                <field name="qty"/>
-                <field name="unit_price"/>
+                <field name="qty" string="Unidades"/>
+                <field name="unit_price" string="Precio"/>
                 <field name="discount" string="Dto. (%)"/>
+                <field name="line_uuid" optional="hide"/>
                 <field name="line_total" sum="Total"/>
             </list>
         </field>
@@ -229,18 +240,24 @@
         <field name="arch" type="xml">
             <form string="Línea de Importación PDA">
                 <sheet>
+                    <div class="oe_title">
+                        <label for="product_code"/>
+                        <h1>
+                            <field name="product_code" readonly="1"/>
+                        </h1>
+                    </div>
                     <group>
-                        <group>
+                        <group string="Importación">
                             <field name="import_id" readonly="1"/>
-                            <field name="sequence"/>
-                            <field name="product_code"/>
-                            <field name="description"/>
+                            <field name="sequence" readonly="1"/>
+                            <field name="description" readonly="1"/>
+                            <field name="line_uuid" readonly="1"/>
                         </group>
-                        <group>
-                            <field name="qty"/>
-                            <field name="unit_price"/>
-                            <field name="discount"/>
-                            <field name="line_total"/>
+                        <group string="Importe">
+                            <field name="qty" readonly="1"/>
+                            <field name="unit_price" readonly="1"/>
+                            <field name="discount" readonly="1"/>
+                            <field name="line_total" readonly="1"/>
                         </group>
                     </group>
                 </sheet>

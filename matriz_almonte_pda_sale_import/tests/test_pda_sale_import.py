@@ -1,6 +1,7 @@
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0)
 """Tests del módulo matriz_almonte_pda_sale_import."""
 import json
+from xml.etree import ElementTree
 
 from odoo.tests.common import TransactionCase
 from odoo.exceptions import ValidationError
@@ -248,6 +249,131 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
         ].create_from_payload(payload, self.token)
         negative_lines = import_rec.line_ids.filtered(lambda l: l.qty < 0)
         self.assertTrue(negative_lines)
+
+    def test_18b_form_view_uses_mail_widgets_for_chatter(self):
+        """La vista formulario debe definir el chatter con widgets mail.
+
+        En este entorno el componente `<chatter/>` no se está resolviendo bien
+        en cliente, por lo que se usa la definición explícita soportada por
+        Odoo con `mail_followers`, `mail_activity` y `mail_thread`.
+        """
+        view = self.env.ref(
+            "matriz_almonte_pda_sale_import.view_matriz_almonte_pda_sale_import_form"
+        )
+        arch = ElementTree.fromstring(view.arch_db)
+        field_names = {
+            node.attrib["name"]
+            for node in arch.iter("field")
+            if node.attrib.get("name")
+        }
+        field_widgets = {
+            node.attrib["name"]: node.attrib.get("widget")
+            for node in arch.iter("field")
+            if node.attrib.get("name")
+        }
+
+        self.assertIsNone(arch.find(".//chatter"))
+        self.assertIsNotNone(arch.find(".//div[@class='oe_chatter']"))
+        self.assertIn("message_follower_ids", field_names)
+        self.assertIn("activity_ids", field_names)
+        self.assertIn("message_ids", field_names)
+        self.assertEqual(field_widgets["message_follower_ids"], "mail_followers")
+        self.assertEqual(field_widgets["activity_ids"], "mail_activity")
+        self.assertEqual(field_widgets["message_ids"], "mail_thread")
+        self.assertIn("device_code", field_names)
+        self.assertIn("customer_reference", field_names)
+
+    def test_18c_list_view_uses_received_decoration_and_state_badge(self):
+        """La lista principal debe reflejar el estado recibido igual que el formulario."""
+        view = self.env.ref(
+            "matriz_almonte_pda_sale_import.view_matriz_almonte_pda_sale_import_list"
+        )
+        arch = ElementTree.fromstring(view.arch_db)
+        list_node = arch if arch.tag == "list" else arch.find(".//list")
+        state_field = arch.find(".//field[@name='state']")
+
+        self.assertIsNotNone(list_node)
+        self.assertEqual(
+            list_node.attrib.get("decoration-info"),
+            "state == 'received'",
+        )
+        self.assertIsNotNone(state_field)
+        self.assertEqual(state_field.attrib.get("widget"), "badge")
+
+    def test_18d_line_views_match_main_line_layout(self):
+        """Las vistas standalone de líneas deben seguir el mismo criterio visual."""
+        list_view = self.env.ref(
+            "matriz_almonte_pda_sale_import.view_matriz_almonte_pda_sale_import_line_list"
+        )
+        form_view = self.env.ref(
+            "matriz_almonte_pda_sale_import.view_matriz_almonte_pda_sale_import_line_form"
+        )
+        list_arch = ElementTree.fromstring(list_view.arch_db)
+        form_arch = ElementTree.fromstring(form_view.arch_db)
+
+        list_fields = {
+            node.attrib["name"]: node.attrib
+            for node in list_arch.iter("field")
+            if node.attrib.get("name")
+        }
+        form_fields = {
+            node.attrib["name"]: node.attrib
+            for node in form_arch.iter("field")
+            if node.attrib.get("name")
+        }
+
+        self.assertEqual(list_fields["sequence"].get("string"), "Nº")
+        self.assertEqual(list_fields["product_code"].get("string"), "Artículo")
+        self.assertEqual(list_fields["qty"].get("string"), "Unidades")
+        self.assertEqual(list_fields["unit_price"].get("string"), "Precio")
+        self.assertEqual(list_fields["line_uuid"].get("optional"), "hide")
+        self.assertIsNotNone(form_arch.find(".//div[@class='oe_title']"))
+        self.assertEqual(form_fields["product_code"].get("readonly"), "1")
+        self.assertEqual(form_fields["line_uuid"].get("readonly"), "1")
+        self.assertEqual(form_fields["line_total"].get("readonly"), "1")
+
+    def test_18e_search_view_uses_consistent_labels(self):
+        """La vista de búsqueda debe usar una nomenclatura homogénea."""
+        view = self.env.ref(
+            "matriz_almonte_pda_sale_import.view_matriz_almonte_pda_sale_import_search"
+        )
+        arch = ElementTree.fromstring(view.arch_db)
+
+        field_labels = {
+            node.attrib["name"]: node.attrib.get("string")
+            for node in arch.iter("field")
+            if node.attrib.get("name")
+        }
+        filter_labels = {
+            node.attrib["name"]: node.attrib.get("string")
+            for node in arch.iter("filter")
+            if node.attrib.get("name")
+        }
+
+        self.assertEqual(arch.attrib.get("string"), "Buscar importaciones PDA")
+        self.assertEqual(field_labels["external_reference"], "UUID operación")
+        self.assertEqual(field_labels["device_code"], "Código Dispositivo")
+        self.assertEqual(field_labels["customer_reference"], "Referencia Cliente")
+        self.assertEqual(field_labels["token_id"], "Token API")
+        self.assertEqual(filter_labels["filter_error"], "Errores")
+        self.assertEqual(filter_labels["filter_duplicate"], "Duplicadas")
+        self.assertEqual(filter_labels["filter_received"], "Recibidas")
+        self.assertEqual(filter_labels["filter_processed"], "Procesadas")
+        self.assertEqual(filter_labels["filter_today"], "Recibidas Hoy")
+        self.assertEqual(filter_labels["group_device"], "Código Dispositivo")
+        self.assertEqual(filter_labels["group_date"], "Fecha de Recepción")
+        self.assertEqual(filter_labels["group_token"], "Token API")
+
+    def test_18f_action_help_keeps_received_import_language(self):
+        """La acción principal debe mantener el mismo lenguaje funcional."""
+        action = self.env.ref(
+            "matriz_almonte_pda_sale_import.action_matriz_almonte_pda_sale_import"
+        )
+
+        self.assertEqual(action.name, "Importaciones PDA")
+        self.assertEqual(action.context, "{'search_default_filter_received': 1}")
+        self.assertIn("Aún no se han recibido importaciones", action.help)
+        self.assertIn("Las importaciones recibidas aparecerán aquí", action.help)
 
     # ------------------------------------------------------------------
     # Tests del validador de payload (capa de lógica pura)
