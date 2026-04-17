@@ -355,7 +355,6 @@ class MatrizAlmontePdaSaleImport(models.Model):
                     "unit_price": float(line.get("precio", line.get("unit_price", 0)) or 0),
                     "discount": float(line.get("discount", 0) or 0),
                     "line_uuid": str(line.get("uuid", "") or ""),
-                    "line_total": float(line.get("line_total", 0) or 0),
                 }
             )
 

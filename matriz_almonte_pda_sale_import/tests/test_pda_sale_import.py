@@ -187,6 +187,38 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
         self.assertAlmostEqual(first_line.unit_price, 2.42)
         self.assertEqual(first_line.line_uuid, "1847731c-3581-4263-9bbb-7c4d66d972d3")
 
+    def test_12b_line_total_is_computed_from_qty_and_price(self):
+        """El total de línea debe calcularse como unidades × precio (menos descuento)."""
+        payload = {
+            "id": 2,
+            "usuario": "LOCAL-01",
+            "fecha_hora": "17/04/2026 15:20:55",
+            "uuid": "UUID-LINE-TOTAL-TEST-001",
+            "imprimir": False,
+            "descuento": 0,
+            "fpago": "00",
+            "lineas": [
+                {
+                    "numero": 1,
+                    "id_articulo": "ART-001",
+                    "unidades": 3,
+                    "precio": 12.10,
+                    "line_total": 0,
+                    "uuid": "line-uuid-001",
+                }
+            ],
+        }
+
+        import_rec, _ = self.env[
+            "matriz.almonte.pda.sale.import"
+        ].create_from_payload(payload, self.token)
+        line = import_rec.line_ids
+
+        self.assertEqual(len(line), 1)
+        self.assertAlmostEqual(line.qty, 3.0)
+        self.assertAlmostEqual(line.unit_price, 12.10)
+        self.assertAlmostEqual(line.line_total, 36.30)
+
     def test_13_payload_raw_stored(self):
         """El payload JSON original se almacena en payload_raw."""
         payload = dict(PAYLOAD_OK, uuid="UUID-RAW-TEST-001")

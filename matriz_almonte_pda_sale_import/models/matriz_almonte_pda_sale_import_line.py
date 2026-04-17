@@ -1,6 +1,6 @@
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0)
 """Modelo de líneas de importación PDA."""
-from odoo import fields, models
+from odoo import api, fields, models
 
 
 class MatrizAlmontePdaSaleImportLine(models.Model):
@@ -58,6 +58,7 @@ class MatrizAlmontePdaSaleImportLine(models.Model):
         help="Calculado: unidades × precio × (1 - descuento/100).",
     )
 
+    @api.depends("qty", "unit_price", "discount")
     def _compute_line_total(self):
         for line in self:
             line.line_total = line.qty * line.unit_price * (1.0 - line.discount / 100.0)
