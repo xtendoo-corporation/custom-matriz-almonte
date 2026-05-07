@@ -17,6 +17,7 @@
         "data/sequences.xml",
         "views/matriz_almonte_api_token_views.xml",
         "views/matriz_almonte_pda_sale_import_views.xml",
+        'views/matriz_almonte_tienda_views.xml',
         "views/menuitems.xml",
     ],
     "installable": True,

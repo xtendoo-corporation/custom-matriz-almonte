@@ -15,6 +15,7 @@
                 <field name="device_code"/>
                 <field name="active" widget="boolean_toggle"/>
                 <field name="last_used_at"/>
+                <field name="tienda_id"/>
                 <field name="import_count" string="Importaciones"/>
                 <field name="create_date" string="Creado"/>
             </list>
@@ -57,6 +58,7 @@
                     <group>
                         <group string="Identificación">
                             <field name="device_code" placeholder="PDA-ANDROID-01"/>
+                            <field name="tienda_id" placeholder="Seleccione una tienda..." options="{'no_create': True}"/>
                             <field name="active"/>
                         </group>
                         <group string="Actividad">

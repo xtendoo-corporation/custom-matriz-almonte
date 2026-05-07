@@ -80,6 +80,10 @@ class MatrizAlmonteApiToken(models.Model):
         compute="_compute_import_count",
         help="Número total de importaciones recibidas con este token.",
     )
+    tienda_id = fields.Many2one(
+        comodel_name='matriz.almonte.tienda',
+        string='Tienda'
+    )
 
     # -------------------------------------------------------------------------
     # Compute
