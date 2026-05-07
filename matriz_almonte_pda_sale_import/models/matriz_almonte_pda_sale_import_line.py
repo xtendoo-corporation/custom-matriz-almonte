@@ -57,6 +57,12 @@ class MatrizAlmontePdaSaleImportLine(models.Model):
         store=True,
         help="Calculado: unidades × precio × (1 - descuento/100).",
     )
+    tienda_id = fields.Many2one(
+        related='import_id.tienda_id', 
+        string='Tienda',
+        store=True,
+        help='Tienda a la que pertenece esta línea de importación.'
+    )
 
     @api.depends("qty", "unit_price", "discount")
     def _compute_line_total(self):

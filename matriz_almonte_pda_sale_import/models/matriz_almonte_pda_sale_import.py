@@ -92,6 +92,12 @@ class MatrizAlmontePdaSaleImport(models.Model):
         tracking=True,
         help="Código del dispositivo PDA tal como lo envió.",
     )
+    tienda_id = fields.Many2one(
+        related='token_id.tienda_id', # ¡OJO! Si tu campo de arriba no se llama 'token_id', cambia este nombre.
+        string='Tienda',
+        store=True,
+        help='Tienda asociada al token de esta importación.'
+    )
 
     # ------------------------------------------------------------------
     # Operation data

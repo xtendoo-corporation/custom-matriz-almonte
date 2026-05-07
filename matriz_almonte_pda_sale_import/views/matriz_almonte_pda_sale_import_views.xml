@@ -26,6 +26,7 @@
                 <field name="total_amount" sum="Total"/>
                 <field name="line_count" string="Líneas"/>
                 <field name="token_id" optional="hide"/>
+                <field name="tienda_id" optional="show"/>
                 <field name="state" widget="badge"
                        decoration-danger="state == 'error'"
                        decoration-warning="state == 'duplicate'"
@@ -185,6 +186,8 @@
                             context="{'group_by': 'received_at:day'}"/>
                     <filter name="group_token" string="Token API"
                             context="{'group_by': 'token_id'}"/>
+                    <filter name="group_by_tienda" string="Tienda" 
+                            context="{'group_by':'tienda_id'}"/>
                 </group>
             </search>
         </field>
@@ -219,6 +222,7 @@
             <list string="Líneas de Importación PDA">
                 <field name="import_id" string="Importación"/>
                 <field name="sequence" string="Nº"/>
+                <field name="tienda_id" optional="show"/>
                 <field name="product_code" string="Artículo"/>
                 <field name="description"/>
                 <field name="qty" string="Unidades"/>
@@ -245,6 +249,7 @@
                     <group>
                         <group string="Importación">
                             <field name="import_id" readonly="1"/>
+                            <field name="tienda_id" readonly="1"/>
                             <field name="sequence" readonly="1"/>
                             <field name="description" readonly="1"/>
                             <field name="line_uuid" readonly="1"/>
@@ -258,6 +263,22 @@
                     </group>
                 </sheet>
             </form>
+        </field>
+    </record>
+
+    <record id="view_matriz_almonte_pda_sale_import_line_search" model="ir.ui.view">
+        <field name="name">matriz.almonte.pda.sale.import.line.search</field>
+        <field name="model">matriz.almonte.pda.sale.import.line</field>
+        <field name="arch" type="xml">
+            <search string="Buscar Líneas">
+                <field name="product_code"/>
+                <field name="import_id"/>
+                <field name="tienda_id"/>
+                <group expand="0" string="Agrupar Por">
+                    <filter string="Tienda" name="group_by_tienda" context="{'group_by':'tienda_id'}"/>
+                    <filter string="Importación" name="group_by_import" context="{'group_by':'import_id'}"/>
+                </group>
+            </search>
         </field>
     </record>
 
