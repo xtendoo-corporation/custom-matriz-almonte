@@ -81,8 +81,15 @@ class MatrizAlmonteApiToken(models.Model):
         help="Número total de importaciones recibidas con este token.",
     )
     tienda_id = fields.Many2one(
-        comodel_name='matriz.almonte.tienda',
-        string='Tienda'
+        comodel_name='pos.config',
+        string='Punto de Venta',
+        help="Punto de venta/tienda en el que operará esta PDA.",
+    )
+    sale_user_id = fields.Many2one(
+        comodel_name="res.users",
+        string="Usuario de Ventas",
+        domain=[("share", "=", False)],
+        help="Usuario de Odoo que se usará para registrar las ventas de este token.",
     )
 
     # -------------------------------------------------------------------------
@@ -103,6 +110,14 @@ class MatrizAlmonteApiToken(models.Model):
     @api.model_create_multi
     def create(self, vals_list):
         for vals in vals_list:
+            if not vals.get("tienda_id"):
+                raise ValidationError(
+                    _("Debe seleccionar un punto de venta para el token.")
+                )
+            if not vals.get("sale_user_id"):
+                raise ValidationError(
+                    _("Debe seleccionar un usuario de ventas para el token.")
+                )
             if not vals.get("token"):
                 vals["token"] = self._generate_token()
         return super().create(vals_list)

@@ -20,6 +20,7 @@
                 <field name="received_at"/>
                 <field name="operation_datetime" optional="show"/>
                 <field name="salesperson_code" string="Usuario" optional="show"/>
+                <field name="sale_user_id" string="Usuario Ventas" optional="show"/>
                 <field name="payment_method" string="F.Pago" optional="show"/>
                 <field name="global_discount" string="Dto.%" optional="hide"/>
                 <field name="print_ticket" optional="hide"/>
@@ -88,6 +89,8 @@
                     <group>
                         <group string="Recepción y Dispositivo">
                             <field name="token_id" readonly="1"/>
+                            <field name="tienda_id" readonly="1"/>
+                            <field name="sale_user_id" readonly="1"/>
                             <field name="pda_id" readonly="1"/>
                             <field name="device_code" readonly="1"/>
                             <field name="received_at" readonly="1"/>
@@ -141,7 +144,11 @@
                         </page>
                     </notebook>
                 </sheet>
-                <chatter/>
+                <div class="oe_chatter">
+                    <field name="message_follower_ids" widget="mail_followers"/>
+                    <field name="activity_ids" widget="mail_activity"/>
+                    <field name="message_ids" widget="mail_thread"/>
+                </div>
             </form>
         </field>
     </record>
@@ -186,7 +193,7 @@
                             context="{'group_by': 'received_at:day'}"/>
                     <filter name="group_token" string="Token API"
                             context="{'group_by': 'token_id'}"/>
-                    <filter name="group_by_tienda" string="Tienda" 
+                    <filter name="group_by_tienda" string="Punto de Venta" 
                             context="{'group_by':'tienda_id'}"/>
                 </group>
             </search>
@@ -275,7 +282,7 @@
                 <field name="import_id"/>
                 <field name="tienda_id"/>
                 <group expand="0" string="Agrupar Por">
-                    <filter string="Tienda" name="group_by_tienda" context="{'group_by':'tienda_id'}"/>
+                    <filter string="Punto de Venta" name="group_by_tienda" context="{'group_by':'tienda_id'}"/>
                     <filter string="Importación" name="group_by_import" context="{'group_by':'import_id'}"/>
                 </group>
             </search>

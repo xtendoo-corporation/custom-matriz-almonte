@@ -59,9 +59,9 @@ class MatrizAlmontePdaSaleImportLine(models.Model):
     )
     tienda_id = fields.Many2one(
         related='import_id.tienda_id', 
-        string='Tienda',
+        string='Punto de Venta',
         store=True,
-        help='Tienda a la que pertenece esta línea de importación.'
+        help='Punto de venta al que pertenece esta línea de importación.'
     )
 
     @api.depends("qty", "unit_price", "discount")

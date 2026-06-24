@@ -94,9 +94,15 @@ class MatrizAlmontePdaSaleImport(models.Model):
     )
     tienda_id = fields.Many2one(
         related='token_id.tienda_id', # ¡OJO! Si tu campo de arriba no se llama 'token_id', cambia este nombre.
-        string='Tienda',
+        string='Punto de Venta',
         store=True,
-        help='Tienda asociada al token de esta importación.'
+        help='Punto de venta asociado al token de esta importación.'
+    )
+    sale_user_id = fields.Many2one(
+        related="token_id.sale_user_id",
+        string="Usuario de Ventas",
+        store=True,
+        help="Usuario configurado en el token para registrar esta importación.",
     )
 
     # ------------------------------------------------------------------

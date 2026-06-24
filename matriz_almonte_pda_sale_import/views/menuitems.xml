@@ -45,13 +45,4 @@
         action="action_matriz_almonte_api_token"
         sequence="10"
         groups="matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin"/>
-
-    <!-- Menú de Tiendas -->
-    <menuitem
-        id="menu_matriz_almonte_tiendas"
-        name="Tiendas"
-        parent="menu_matriz_almonte_pda_config"
-        action="action_matriz_almonte_tienda"
-        sequence="20"
-        groups="matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin"/>
 </odoo>

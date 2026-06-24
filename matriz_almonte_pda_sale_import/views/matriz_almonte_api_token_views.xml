@@ -16,6 +16,7 @@
                 <field name="active" widget="boolean_toggle"/>
                 <field name="last_used_at"/>
                 <field name="tienda_id"/>
+                <field name="sale_user_id"/>
                 <field name="import_count" string="Importaciones"/>
                 <field name="create_date" string="Creado"/>
             </list>
@@ -58,7 +59,8 @@
                     <group>
                         <group string="Identificación">
                             <field name="device_code" placeholder="PDA-ANDROID-01"/>
-                            <field name="tienda_id" placeholder="Seleccione una tienda..." options="{'no_create': True}"/>
+                            <field name="tienda_id" string="Punto de Venta" required="1" placeholder="Seleccione un punto de venta..." options="{'no_create': True}"/>
+                            <field name="sale_user_id" string="Usuario de Ventas" required="1" options="{'no_create': True}"/>
                             <field name="active"/>
                         </group>
                         <group string="Actividad">

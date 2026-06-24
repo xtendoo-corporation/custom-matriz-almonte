@@ -51,10 +51,15 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
+        cls.tienda = cls.env["pos.config"].search([], limit=1)
+        if not cls.tienda:
+            cls.tienda = cls.env["pos.config"].create({"name": "Punto de Venta Test"})
         cls.token = cls.env["matriz.almonte.api.token"].create(
             {
                 "name": "Token Test PDA",
                 "device_code": "PDA-TEST",
+                "tienda_id": cls.tienda.id,
+                "sale_user_id": cls.env.user.id,
             }
         )
 
@@ -75,7 +80,12 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
         mostrar 'Campos no válidos: Token' sino guardar y auto-generar el token.
         """
         rec = self.env["matriz.almonte.api.token"].create(
-            {"name": "Token Solo Nombre", "device_code": "PDA-WEB-01"}
+            {
+                "name": "Token Solo Nombre",
+                "device_code": "PDA-WEB-01",
+                "tienda_id": self.tienda.id,
+                "sale_user_id": self.env.user.id,
+            }
         )
         # El token debe haberse generado automáticamente
         self.assertTrue(rec.token, "El token no se generó al guardar sin pasarlo explícitamente.")
@@ -88,14 +98,24 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
         """No pueden existir dos tokens con el mismo valor."""
         with self.assertRaises(Exception):
             self.env["matriz.almonte.api.token"].create(
-                {"name": "Token Duplicado", "token": self.token.token}
+                {
+                    "name": "Token Duplicado",
+                    "token": self.token.token,
+                    "tienda_id": self.tienda.id,
+                    "sale_user_id": self.env.user.id,
+                }
             )
 
     def test_03_token_min_length(self):
         """Un token demasiado corto lanza ValidationError."""
         with self.assertRaises(ValidationError):
             self.env["matriz.almonte.api.token"].create(
-                {"name": "Token Corto", "token": "short"}
+                {
+                    "name": "Token Corto",
+                    "token": "short",
+                    "tienda_id": self.tienda.id,
+                    "sale_user_id": self.env.user.id,
+                }
             )
 
     def test_04_authenticate_valid_token(self):
@@ -133,6 +153,8 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
         self.assertEqual(import_rec.state, "received")
         self.assertEqual(import_rec.external_reference, "9d71fd5e-c878-4f86-bfbc-febe632ff4f8")
         self.assertEqual(import_rec.token_id, self.token)
+        self.assertEqual(import_rec.tienda_id, self.tienda)
+        self.assertEqual(import_rec.sale_user_id, self.env.user)
         self.assertEqual(len(import_rec.line_ids), 3)
 
     def test_09_sequence_name_assigned(self):
@@ -161,7 +183,11 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
     def test_11_duplicate_detection_by_hash(self):
         """El mismo payload exacto desde otro token también se detecta."""
         token2 = self.env["matriz.almonte.api.token"].create(
-            {"name": "Token Test 2"}
+            {
+                "name": "Token Test 2",
+                "tienda_id": self.tienda.id,
+                "sale_user_id": self.env.user.id,
+            }
         )
         payload = dict(PAYLOAD_OK, uuid="UUID-HASH-TEST-001")
         rec1, is_dup1 = self.env[
