@@ -1,10 +1,12 @@
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0)
 """Tests del módulo matriz_almonte_pda_sale_import."""
 import json
+from unittest.mock import patch
 from xml.etree import ElementTree
 
 from odoo.tests.common import TransactionCase
 from odoo.exceptions import ValidationError
+from werkzeug.wrappers import Response
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +45,33 @@ PAYLOAD_OK = {
         },
     ],
 }
+
+
+class _FakeHttpRequest:
+    """Sustituto mínimo de ``httprequest`` para tests de controlador."""
+
+    def __init__(self, headers=None, remote_addr="127.0.0.1"):
+        self.headers = headers or {}
+        self.remote_addr = remote_addr
+
+
+class _FakeRequest:
+    """Sustituto mínimo de ``odoo.http.request`` para tests unitarios."""
+
+    def __init__(self, env, headers=None, remote_addr="127.0.0.1"):
+        self.env = env
+        self.httprequest = _FakeHttpRequest(
+            headers=headers,
+            remote_addr=remote_addr,
+        )
+
+    @staticmethod
+    def make_response(body, headers=None, status=200):
+        return Response(
+            body,
+            status=status,
+            headers=headers or [],
+        )
 
 
 class TestMatrizAlmontePdaSaleImport(TransactionCase):
@@ -488,3 +517,61 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
         }
         payload = dict(PAYLOAD_OK, lineas=[bad_line])
         self.assertIsNotNone(self._validate(payload))
+
+    def _call_connection_test_endpoint(self, headers=None):
+        from odoo.addons.matriz_almonte_pda_sale_import.controllers import (
+            pda_connection_test_controller,
+        )
+
+        controller = (
+            pda_connection_test_controller.MatrizAlmontePdaConnectionTestController()
+        )
+        fake_request = _FakeRequest(self.env, headers=headers)
+
+        with patch.object(pda_connection_test_controller, "request", fake_request):
+            response = controller.pda_connection_test()
+
+        return json.loads(response.get_data(as_text=True)), response.status_code
+
+    def test_27_connection_test_requires_token(self):
+        """El test de conexión debe rechazar peticiones sin token."""
+        payload, status = self._call_connection_test_endpoint()
+
+        self.assertEqual(status, 401)
+        self.assertFalse(payload["success"])
+        self.assertEqual(payload["code"], "MISSING_TOKEN")
+        self.assertIsNone(payload["token_id"])
+
+    def test_28_connection_test_accepts_bearer_token(self):
+        """El endpoint confirma la conexión con un Bearer token válido."""
+        payload, status = self._call_connection_test_endpoint(
+            headers={"Authorization": f"Bearer {self.token.token}"}
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["code"], "CONNECTION_OK")
+        self.assertEqual(payload["token_id"], self.token.id)
+        self.assertEqual(payload["token_name"], self.token.name)
+        self.assertEqual(payload["device_code"], self.token.device_code)
+
+    def test_29_connection_test_rejects_invalid_token(self):
+        """El test de conexión debe rechazar tokens desconocidos."""
+        payload, status = self._call_connection_test_endpoint(
+            headers={"Authorization": "Bearer INVALID_TOKEN_VALUE_XYZ_000000000000000"}
+        )
+
+        self.assertEqual(status, 401)
+        self.assertFalse(payload["success"])
+        self.assertEqual(payload["code"], "INVALID_TOKEN")
+
+    def test_30_connection_test_accepts_x_api_token_header(self):
+        """La cabecera X-API-Token actúa como fallback para dispositivos legacy."""
+        payload, status = self._call_connection_test_endpoint(
+            headers={"X-API-Token": self.token.token}
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["code"], "CONNECTION_OK")
+        self.assertEqual(payload["token_id"], self.token.id)
