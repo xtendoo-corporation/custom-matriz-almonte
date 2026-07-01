@@ -91,6 +91,49 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
                 "sale_user_id": cls.env.user.id,
             }
         )
+        cls.sale_tax = cls.env["account.tax"].create(
+            {
+                "name": "IVA 21 Ventas Test",
+                "amount": 21.0,
+                "amount_type": "percent",
+                "type_tax_use": "sale",
+            }
+        )
+        cls.product_template_export = cls.env["product.template"].create(
+            {
+                "name": "Producto Exportable",
+                "barcode": "8412345678901",
+                "default_code": "PDA-REF-001",
+                "sale_ok": True,
+                "taxes_id": [(6, 0, cls.sale_tax.ids)],
+            }
+        )
+        cls.product_template_without_tax = cls.env["product.template"].create(
+            {
+                "name": "Producto Sin IVA",
+                "barcode": "8412345678902",
+                "default_code": "PDA-REF-002",
+                "sale_ok": True,
+                "taxes_id": [(5, 0, 0)],
+            }
+        )
+        cls.product_template_not_sale = cls.env["product.template"].create(
+            {
+                "name": "Producto No Vendible",
+                "barcode": "8412345678903",
+                "default_code": "PDA-NO-SALE",
+                "sale_ok": False,
+            }
+        )
+        cls.product_template_inactive = cls.env["product.template"].create(
+            {
+                "name": "Producto Inactivo",
+                "barcode": "8412345678904",
+                "default_code": "PDA-INACTIVE",
+                "sale_ok": True,
+                "active": False,
+            }
+        )
 
     # ------------------------------------------------------------------
     # Tests de modelo token
@@ -533,6 +576,21 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
 
         return json.loads(response.get_data(as_text=True)), response.status_code
 
+    def _call_product_catalog_endpoint(self, headers=None):
+        from odoo.addons.matriz_almonte_pda_sale_import.controllers import (
+            pda_product_catalog_controller,
+        )
+
+        controller = (
+            pda_product_catalog_controller.MatrizAlmontePdaProductCatalogController()
+        )
+        fake_request = _FakeRequest(self.env, headers=headers)
+
+        with patch.object(pda_product_catalog_controller, "request", fake_request):
+            response = controller.pda_product_catalog()
+
+        return json.loads(response.get_data(as_text=True)), response.status_code
+
     def test_27_connection_test_requires_token(self):
         """El test de conexión debe rechazar peticiones sin token."""
         payload, status = self._call_connection_test_endpoint()
@@ -575,3 +633,64 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
         self.assertTrue(payload["success"])
         self.assertEqual(payload["code"], "CONNECTION_OK")
         self.assertEqual(payload["token_id"], self.token.id)
+
+    def test_31_product_catalog_requires_token(self):
+        """El catálogo debe rechazar peticiones sin token."""
+        payload, status = self._call_product_catalog_endpoint()
+
+        self.assertEqual(status, 401)
+        self.assertFalse(payload["success"])
+        self.assertEqual(payload["code"], "MISSING_TOKEN")
+        self.assertEqual(payload["productos"], [])
+
+    def test_32_product_catalog_returns_expected_fields(self):
+        """El catálogo JSON debe devolver los campos requeridos por Android."""
+        payload, status = self._call_product_catalog_endpoint(
+            headers={"Authorization": f"Bearer {self.token.token}"}
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["code"], "PRODUCTS_OK")
+
+        products_by_reference = {
+            product["referencia"]: product
+            for product in payload["productos"]
+        }
+
+        self.assertIn("PDA-REF-001", products_by_reference)
+        self.assertIn("PDA-REF-002", products_by_reference)
+        self.assertNotIn("PDA-NO-SALE", products_by_reference)
+        self.assertNotIn("PDA-INACTIVE", products_by_reference)
+
+        export_product = products_by_reference["PDA-REF-001"]
+        self.assertEqual(
+            set(export_product),
+            {"id", "nombre", "codigo_barras", "referencia", "porcentaje_iva"},
+        )
+        self.assertEqual(export_product["nombre"], "Producto Exportable")
+        self.assertEqual(export_product["codigo_barras"], "8412345678901")
+        self.assertEqual(export_product["porcentaje_iva"], 21.0)
+
+        product_without_tax = products_by_reference["PDA-REF-002"]
+        self.assertEqual(product_without_tax["porcentaje_iva"], 0.0)
+
+    def test_33_product_catalog_rejects_invalid_token(self):
+        """El catálogo debe rechazar tokens desconocidos."""
+        payload, status = self._call_product_catalog_endpoint(
+            headers={"Authorization": "Bearer INVALID_TOKEN_VALUE_XYZ_000000000000000"}
+        )
+
+        self.assertEqual(status, 401)
+        self.assertFalse(payload["success"])
+        self.assertEqual(payload["code"], "INVALID_TOKEN")
+
+    def test_34_product_catalog_accepts_x_api_token_header(self):
+        """La cabecera X-API-Token también permite descargar el catálogo."""
+        payload, status = self._call_product_catalog_endpoint(
+            headers={"X-API-Token": self.token.token}
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["code"], "PRODUCTS_OK")
