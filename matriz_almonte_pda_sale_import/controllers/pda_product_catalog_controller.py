@@ -113,6 +113,8 @@ class MatrizAlmontePdaProductCatalogController(http.Controller):
                         "nombre": product.name,
                         "codigo_barras": product.barcode or "",
                         "referencia": product.default_code or "",
+                        "precio_costo": product.standard_price,
+                        "precio_venta": product.lst_price,
                         "porcentaje_iva": self._get_vat_percent(product),
                     }
                     for product in products
