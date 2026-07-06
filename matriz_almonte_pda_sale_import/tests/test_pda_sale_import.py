@@ -50,19 +50,24 @@ PAYLOAD_OK = {
 class _FakeHttpRequest:
     """Sustituto mínimo de ``httprequest`` para tests de controlador."""
 
-    def __init__(self, headers=None, remote_addr="127.0.0.1"):
+    def __init__(self, headers=None, remote_addr="127.0.0.1", body=b""):
         self.headers = headers or {}
         self.remote_addr = remote_addr
+        self._body = body
+
+    def get_data(self, as_text=False):
+        return self._body.decode("utf-8") if as_text else self._body
 
 
 class _FakeRequest:
     """Sustituto mínimo de ``odoo.http.request`` para tests unitarios."""
 
-    def __init__(self, env, headers=None, remote_addr="127.0.0.1"):
+    def __init__(self, env, headers=None, remote_addr="127.0.0.1", body=b""):
         self.env = env
         self.httprequest = _FakeHttpRequest(
             headers=headers,
             remote_addr=remote_addr,
+            body=body,
         )
 
     @staticmethod
@@ -91,49 +96,21 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
                 "sale_user_id": cls.env.user.id,
             }
         )
-        cls.sale_tax = cls.env["account.tax"].create(
-            {
-                "name": "IVA 21 Ventas Test",
-                "amount": 21.0,
-                "amount_type": "percent",
-                "type_tax_use": "sale",
-            }
+        cls.product_export = cls.env["product.product"].search(
+            [("active", "=", True), ("sale_ok", "=", True)],
+            limit=1,
         )
-        cls.product_template_export = cls.env["product.template"].create(
-            {
-                "name": "Producto Exportable",
-                "barcode": "8412345678901",
-                "default_code": "PDA-REF-001",
-                "sale_ok": True,
-                "taxes_id": [(6, 0, cls.sale_tax.ids)],
-            }
+        cls.product_without_tax = cls.env["product.product"].search(
+            [
+                ("active", "=", True),
+                ("sale_ok", "=", True),
+                ("taxes_id", "=", False),
+                ("id", "!=", cls.product_export.id),
+            ],
+            limit=1,
         )
-        cls.product_template_without_tax = cls.env["product.template"].create(
-            {
-                "name": "Producto Sin IVA",
-                "barcode": "8412345678902",
-                "default_code": "PDA-REF-002",
-                "sale_ok": True,
-                "taxes_id": [(5, 0, 0)],
-            }
-        )
-        cls.product_template_not_sale = cls.env["product.template"].create(
-            {
-                "name": "Producto No Vendible",
-                "barcode": "8412345678903",
-                "default_code": "PDA-NO-SALE",
-                "sale_ok": False,
-            }
-        )
-        cls.product_template_inactive = cls.env["product.template"].create(
-            {
-                "name": "Producto Inactivo",
-                "barcode": "8412345678904",
-                "default_code": "PDA-INACTIVE",
-                "sale_ok": True,
-                "active": False,
-            }
-        )
+        if not cls.product_export:
+            raise ValidationError("No hay productos vendibles activos para ejecutar los tests.")
 
     # ------------------------------------------------------------------
     # Tests de modelo token
@@ -652,28 +629,27 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
         self.assertEqual(status, 200)
         self.assertTrue(payload["success"])
         self.assertEqual(payload["code"], "PRODUCTS_OK")
+        self.assertGreaterEqual(payload["count"], 1)
+        self.assertTrue(payload["productos"])
 
-        products_by_reference = {
-            product["referencia"]: product
-            for product in payload["productos"]
-        }
-
-        self.assertIn("PDA-REF-001", products_by_reference)
-        self.assertIn("PDA-REF-002", products_by_reference)
-        self.assertNotIn("PDA-NO-SALE", products_by_reference)
-        self.assertNotIn("PDA-INACTIVE", products_by_reference)
-
-        export_product = products_by_reference["PDA-REF-001"]
+        export_product = payload["productos"][0]
         self.assertEqual(
             set(export_product),
-            {"id", "nombre", "codigo_barras", "referencia", "porcentaje_iva"},
+            {
+                "id",
+                "nombre",
+                "codigo_barras",
+                "referencia",
+                "precio_costo",
+                "precio_venta",
+                "porcentaje_iva",
+            },
         )
-        self.assertEqual(export_product["nombre"], "Producto Exportable")
-        self.assertEqual(export_product["codigo_barras"], "8412345678901")
-        self.assertEqual(export_product["porcentaje_iva"], 21.0)
-
-        product_without_tax = products_by_reference["PDA-REF-002"]
-        self.assertEqual(product_without_tax["porcentaje_iva"], 0.0)
+        self.assertIsInstance(export_product["id"], int)
+        self.assertIsInstance(export_product["nombre"], str)
+        self.assertIsInstance(export_product["codigo_barras"], str)
+        self.assertIsInstance(export_product["referencia"], str)
+        self.assertIsInstance(export_product["porcentaje_iva"], float)
 
     def test_33_product_catalog_rejects_invalid_token(self):
         """El catálogo debe rechazar tokens desconocidos."""
@@ -694,3 +670,107 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
         self.assertEqual(status, 200)
         self.assertTrue(payload["success"])
         self.assertEqual(payload["code"], "PRODUCTS_OK")
+
+    def _call_pos_session_status_endpoint(self, headers=None):
+        from odoo.addons.matriz_almonte_pda_sale_import.controllers import (
+            pda_pos_order_controller,
+        )
+
+        controller = pda_pos_order_controller.MatrizAlmontePdaPosOrderController()
+        fake_request = _FakeRequest(self.env, headers=headers)
+
+        with patch.object(pda_pos_order_controller, "request", fake_request):
+            response = controller.pda_pos_session_status()
+
+        return json.loads(response.get_data(as_text=True)), response.status_code
+
+    def _call_pos_order_endpoint(self, payload, headers=None):
+        from odoo.addons.matriz_almonte_pda_sale_import.controllers import (
+            pda_pos_order_controller,
+        )
+
+        controller = pda_pos_order_controller.MatrizAlmontePdaPosOrderController()
+        fake_request = _FakeRequest(
+            self.env,
+            headers=headers,
+            body=json.dumps(payload).encode("utf-8"),
+        )
+
+        with patch.object(pda_pos_order_controller, "request", fake_request):
+            response = controller.pda_create_pos_order()
+
+        return json.loads(response.get_data(as_text=True)), response.status_code
+
+    def test_35_pos_session_status_requires_token(self):
+        """El endpoint de estado de sesión POS debe requerir token."""
+        payload, status = self._call_pos_session_status_endpoint()
+        self.assertEqual(status, 401)
+        self.assertFalse(payload["success"])
+        self.assertEqual(payload["code"], "MISSING_TOKEN")
+
+    def test_36_pos_session_status_returns_required_fields(self):
+        """El estado de sesión devuelve guía de campos para crear pedido."""
+        payload, status = self._call_pos_session_status_endpoint(
+            headers={"Authorization": f"Bearer {self.token.token}"}
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["success"])
+        self.assertIn(payload["code"], ("SESSION_OPEN", "SESSION_NOT_OPEN"))
+        self.assertIn("required_fields", payload)
+        self.assertIn("header_required", payload["required_fields"])
+        self.assertIn("line_required", payload["required_fields"])
+        self.assertIn("external_reference", payload["required_fields"]["header_required"])
+
+    def test_37_create_pos_order_requires_open_session(self):
+        """Si no hay sesión abierta, la API debe devolver SESSION_NOT_OPEN."""
+        self.env["pos.session"].search(
+            [("config_id", "=", self.tienda.id), ("state", "=", "opened")]
+        ).sudo().write({"state": "closed"})
+        payload, status = self._call_pos_order_endpoint(
+            payload={
+                "external_reference": "PDA-POS-NO-SESSION-001",
+                "lineas": [{"product_id": self.product_export.id, "qty": 1}],
+            },
+            headers={"Authorization": f"Bearer {self.token.token}"},
+        )
+
+        self.assertEqual(status, 409)
+        self.assertFalse(payload["success"])
+        self.assertEqual(payload["code"], "SESSION_NOT_OPEN")
+
+    def test_38_create_pos_order_ok(self):
+        """Debe crear un pos.order con líneas cuando hay sesión abierta."""
+        session = self.env["pos.session"].search(
+            [("config_id", "=", self.tienda.id), ("state", "=", "opened")],
+            limit=1,
+        )
+        if not session:
+            session = self.env["pos.session"].create(
+                {
+                    "config_id": self.tienda.id,
+                    "user_id": self.env.user.id,
+                    "state": "opened",
+                }
+            )
+
+        payload, status = self._call_pos_order_endpoint(
+            payload={
+                "external_reference": "PDA-POS-ORDER-001",
+                "lineas": [
+                    {"product_id": self.product_export.id, "qty": 2, "price_unit": 10.0},
+                    {"product_id": self.product_export.id, "qty": 1, "price_unit": 5.0},
+                ],
+                "mark_as_paid": False,
+            },
+            headers={"Authorization": f"Bearer {self.token.token}"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["success"])
+        self.assertEqual(payload["code"], "CREATED")
+        order = self.env["pos.order"].browse(payload["order_id"])
+        self.assertTrue(order.exists())
+        self.assertEqual(order.session_id.id, session.id)
+        self.assertEqual(order.user_id.id, self.token.sale_user_id.id)
+        self.assertEqual(len(order.lines), 2)

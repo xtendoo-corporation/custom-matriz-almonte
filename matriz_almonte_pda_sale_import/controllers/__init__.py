@@ -2,3 +2,4 @@
 from . import pda_sale_import_controller
 from . import pda_connection_test_controller
 from . import pda_product_catalog_controller
+from . import pda_pos_order_controller
