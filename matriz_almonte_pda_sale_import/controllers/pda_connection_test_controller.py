@@ -24,18 +24,23 @@ def _json_response(data, status=200):
     )
 
 
-def _error(code, message, http_status=400):
+def _error(code, message, http_status=400, **extra):
     """Construye una respuesta de error homogénea."""
-    return _json_response(
-        {
-            "success": False,
-            "code": code,
-            "message": message,
-            "token_id": None,
-            "device_code": None,
-        },
-        status=http_status,
-    )
+    error_response = {
+        "success": False,
+        "code": code,
+        "message": message,
+        "token_id": None,
+        "device_code": None,
+        "pos_id": None,
+        "pos_name": None,
+        "sale_user_id": None,
+        "sale_user_name": None,
+        "default_user_id": None,
+        "default_user_name": None,
+    }
+    error_response.update(extra)
+    return _json_response(error_response, status=http_status)
 
 
 def _remote_ip():
@@ -96,6 +101,20 @@ class MatrizAlmontePdaConnectionTestController(http.Controller):
                 http_status=401,
             )
 
+        pos_config = token_rec.tienda_id
+        pos_id = pos_config.id if pos_config else None
+        sale_user_id = token_rec.sale_user_id.id if token_rec.sale_user_id else None
+        sale_user_name = token_rec.sale_user_id.name if token_rec.sale_user_id else None
+        
+        # Usuario por defecto de la sesión actual (si hay sesión abierta)
+        default_user_id = None
+        default_user_name = None
+        if pos_config:
+            current_user = pos_config.current_user_id
+            if current_user:
+                default_user_id = current_user.id
+                default_user_name = current_user.name
+
         return _json_response(
             {
                 "success": True,
@@ -104,6 +123,12 @@ class MatrizAlmontePdaConnectionTestController(http.Controller):
                 "token_id": token_rec.id,
                 "token_name": token_rec.name,
                 "device_code": token_rec.device_code or "",
+                "pos_id": pos_id,
+                "pos_name": pos_config.name if pos_config else None,
+                "sale_user_id": sale_user_id,
+                "sale_user_name": sale_user_name,
+                "default_user_id": default_user_id,
+                "default_user_name": default_user_name,
             },
             status=200,
         )
