@@ -140,7 +140,54 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 http_status=400,
             )
 
-        _logger.info(f"🏪 [PDA ORDER] POS Asignado al Token: '{pos_config.name}' (ID: {pos_config.id})")
+        # ======== INFORMACIÓN COMPLETA DEL TOKEN Y POS ========
+        _logger.info("*" * 80)
+        _logger.info("📋 [PDA ORDER] INFORMACIÓN DEL TOKEN Y PUNTO DE VENTA")
+        _logger.info("*" * 80)
+        _logger.info("")
+        _logger.info("🔑 INFORMACIÓN DEL TOKEN:")
+        _logger.info(f"   ├─ ID Token: {token_rec.id}")
+        _logger.info(f"   ├─ Nombre: {token_rec.name}")
+        _logger.info(f"   ├─ Código Dispositivo: {token_rec.device_code or 'N/A'}")
+        _logger.info(f"   ├─ Estado: {'✅ ACTIVO' if token_rec.active else '❌ INACTIVO'}")
+        _logger.info(f"   ├─ Usuario de Ventas: {token_rec.sale_user_id.name if token_rec.sale_user_id else 'N/A'} (ID: {token_rec.sale_user_id.id if token_rec.sale_user_id else 'N/A'})")
+        _logger.info(f"   ├─ Último uso: {token_rec.last_used_at or 'Nunca'}")
+        _logger.info(f"   ├─ Importaciones totales: {token_rec.import_count}")
+        _logger.info(f"   └─ Notas: {token_rec.notes or 'Sin notas'}")
+        _logger.info("")
+        
+        _logger.info("🏪 INFORMACIÓN DEL PUNTO DE VENTA:")
+        _logger.info(f"   ├─ ID POS: {pos_config.id}")
+        _logger.info(f"   ├─ Nombre: {pos_config.name}")
+        _logger.info(f"   ├─ Código: {pos_config.code or 'N/A'}")
+        _logger.info(f"   ├─ Estado: {'✅ ACTIVO' if pos_config.active else '❌ INACTIVO'}")
+        _logger.info(f"   ├─ Empresa: {pos_config.company_id.name if pos_config.company_id else 'N/A'} (ID: {pos_config.company_id.id if pos_config.company_id else 'N/A'})")
+        _logger.info(f"   ├─ Almacén: {pos_config.warehouse_id.name if pos_config.warehouse_id else 'N/A'} (ID: {pos_config.warehouse_id.id if pos_config.warehouse_id else 'N/A'})")
+        _logger.info(f"   ├─ Moneda: {pos_config.currency_id.name if pos_config.currency_id else 'N/A'}")
+        _logger.info(f"   ├─ Has Active Session: {'✅ SÍ' if pos_config.has_active_session else '❌ NO'}")
+        _logger.info(f"   ├─ Current Session State: {pos_config.current_session_state or 'Sin sesión'}")
+        _logger.info(f"   ├─ Usuario POS Session: {pos_config.pos_session_username or 'N/A'}")
+        _logger.info(f"   └─ Duración Sesión: {pos_config.pos_session_duration or 'N/A'}")
+        _logger.info("")
+        
+        _logger.info("📥 INFORMACIÓN DE IMPORTACIÓN:")
+        _logger.info(f"   ├─ ¿IMPORTA?: {'✅ SÍ - Se aceptarán pedidos' if pos_config.active and token_rec.active else '❌ NO - Se rechazarán pedidos'}")
+        _logger.info(f"   │")
+        if not pos_config.active:
+            _logger.info(f"   ├─ RAZÓN: El Punto de Venta está INACTIVO")
+            _logger.info(f"   │  └─ Acción: Activar POS en configuración")
+        if not token_rec.active:
+            _logger.info(f"   ├─ RAZÓN: El Token está INACTIVO")
+            _logger.info(f"   │  └─ Acción: Activar token en configuración")
+        if pos_config.active and token_rec.active and not pos_config.has_active_session:
+            _logger.info(f"   ├─ RAZÓN: NO hay sesión POS abierta")
+            _logger.info(f"   │  └─ Acción: Se validará al intentar crear pedido")
+        if pos_config.active and token_rec.active and pos_config.has_active_session:
+            _logger.info(f"   ├─ RAZÓN: TODO CORRECTO - Token y POS activos con sesión abierta")
+            _logger.info(f"   │  └─ Acción: Se aceptarán los pedidos")
+        _logger.info(f"   └─ Estado Final: {'✅ APTO PARA CREAR PEDIDOS' if pos_config.active and token_rec.active else '❌ NO APTO - Revisar configuración'}")
+        _logger.info("*" * 80)
+        _logger.info("")
 
         # ====== VERIFICACIÓN CRÍTICA: SESIÓN POS ABIERTA ======
         _logger.info(f"🔍 [PDA ORDER] Verificando si sesión POS está ABIERTA...")
