@@ -120,35 +120,64 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
     )
     def pda_create_pos_order(self, **kwargs):
         """Crea un pedido POS desde un payload JSON externo."""
+        _logger.info("=" * 80)
+        _logger.info("🔵 [PDA ORDER] Nueva petición de creación de pedido desde PDA")
+        _logger.info(f"   IP del cliente: {_remote_ip()}")
+        
         token_rec, error_response = self._authenticate_token()
         if error_response:
+            _logger.warning("❌ [PDA ORDER] Error de autenticación")
             return error_response
+
+        _logger.info(f"✅ [PDA ORDER] Token autenticado: {token_rec.name} (ID: {token_rec.id})")
 
         pos_config = token_rec.tienda_id
         if not pos_config:
+            _logger.warning(f"❌ [PDA ORDER] Token {token_rec.name} sin POS configurado")
             return _error(
                 "TOKEN_WITHOUT_POS",
                 "El token no tiene un Punto de Venta POS configurado.",
                 http_status=400,
             )
 
+        _logger.info(f"🏪 [PDA ORDER] POS Config: {pos_config.name} (ID: {pos_config.id})")
+
+        # Verificar que hay una sesión POS abierta
         open_session = self._get_open_session(pos_config)
         if not open_session:
+            _logger.error(
+                f"❌ [PDA ORDER] NO HAY SESIÓN ABIERTA para {pos_config.name}. "
+                f"Estado actual: Estado de sesión cerrado o inexistente. "
+                f"Acción requerida: Abrir sesión desde Odoo 18"
+            )
             return _error(
                 "SESSION_NOT_OPEN",
                 (
-                    "No hay ninguna sesión POS abierta para el Punto de Venta "
-                    f"'{pos_config.name}'. Debe abrirse desde Odoo 18."
+                    "❌ SESIÓN POS NO ABIERTA\n\n"
+                    f"No hay ninguna sesión POS abierta para '{pos_config.name}'.\n\n"
+                    "Acción requerida:\n"
+                    "1. Inicia sesión en Odoo 18\n"
+                    "2. Ve a Punto de Venta → {pos_config.name}\n"
+                    "3. Abre una nueva sesión\n\n"
+                    "Una vez abierta la sesión, puedes usar la PDA para crear pedidos."
                 ),
                 http_status=409,
                 pos_config_id=pos_config.id,
                 pos_config_name=pos_config.name,
+                session_open=False,
                 required_fields=self._required_payload_fields(),
             )
 
+        _logger.info(
+            f"✅ [PDA ORDER] Sesión POS ABIERTA: {open_session.name} "
+            f"(ID: {open_session.id}, Estado: {open_session.state})"
+        )
+
+        # Leer y parsear el payload JSON
         payload_or_error = self._read_json_payload()
         if isinstance(payload_or_error, dict) and payload_or_error.get("_error"):
             err = payload_or_error["_error"]
+            _logger.warning(f"❌ [PDA ORDER] Error al leer payload: {err['code']} - {err['message']}")
             return _error(
                 err["code"],
                 err["message"],
@@ -157,8 +186,34 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             )
         payload = payload_or_error
 
+        _logger.info(f"📦 [PDA ORDER] Payload recibido:")
+        _logger.info(f"   - external_reference: {payload.get('external_reference')}")
+        _logger.info(f"   - uuid: {payload.get('uuid')}")
+        _logger.info(f"   - partner_id: {payload.get('partner_id')}")
+        _logger.info(f"   - to_invoice: {payload.get('to_invoice')}")
+        _logger.info(f"   - mark_as_paid: {payload.get('mark_as_paid')}")
+        
+        lineas = payload.get("lineas") if "lineas" in payload else payload.get("lines")
+        _logger.info(f"   - Número de líneas: {len(lineas) if lineas else 0}")
+        if lineas:
+            for idx, line in enumerate(lineas, start=1):
+                _logger.info(
+                    f"     Línea {idx}: producto={line.get('product_id') or line.get('default_code') or line.get('barcode') or line.get('id_articulo')}, "
+                    f"qty={line.get('qty')}, "
+                    f"price={line.get('price_unit', line.get('precio', 'default'))}, "
+                    f"discount={line.get('discount', 0)}%"
+                )
+
+        payments = payload.get("payments", [])
+        _logger.info(f"   - Número de pagos: {len(payments)}")
+        if payments:
+            for idx, pmt in enumerate(payments, start=1):
+                _logger.info(f"     Pago {idx}: method={pmt.get('payment_method_id')}, amount={pmt.get('amount')}")
+
+        # Validar el payload
         validation_error = self._validate_payload(payload)
         if validation_error:
+            _logger.warning(f"❌ [PDA ORDER] Validación fallida: {validation_error}")
             return _error(
                 "VALIDATION_ERROR",
                 validation_error,
@@ -170,6 +225,11 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             str(payload.get("external_reference") or payload.get("uuid") or "").strip()
         )
         order_uuid = str(payload.get("uuid") or external_ref or uuid4())
+        
+        _logger.info(f"🔍 [PDA ORDER] Buscando pedido duplicado...")
+        _logger.info(f"   - external_ref: {external_ref}")
+        _logger.info(f"   - order_uuid: {order_uuid}")
+        
         existing_order = request.env["pos.order"].sudo().search(
             [
                 ("session_id.config_id", "=", pos_config.id),
@@ -180,6 +240,10 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             limit=1,
         )
         if existing_order:
+            _logger.warning(
+                f"⚠️  [PDA ORDER] Pedido DUPLICADO detectado: "
+                f"{existing_order.name} (ID: {existing_order.id})"
+            )
             return _json_response(
                 {
                     "success": True,
@@ -195,6 +259,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 status=200,
             )
 
+        _logger.info(f"📝 [PDA ORDER] Creando nuevo pedido POS...")
         try:
             order = self._create_pos_order_from_payload(
                 payload=payload,
@@ -204,7 +269,17 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 order_uuid=order_uuid,
                 external_ref=external_ref,
             )
+            _logger.info(
+                f"✅ [PDA ORDER] PEDIDO CREADO EXITOSAMENTE: {order.name} (ID: {order.id})"
+            )
+            _logger.info(f"   - external_reference: {external_ref}")
+            _logger.info(f"   - Total: {order.amount_total} {order.currency_id.name}")
+            _logger.info(f"   - Usuario: {order.user_id.name} (ID: {order.user_id.id})")
+            _logger.info(f"   - Estado: {order.state}")
+            _logger.info("=" * 80)
         except (ValidationError, UserError) as exc:
+            _logger.error(f"❌ [PDA ORDER] Error al crear pedido: {str(exc)}")
+            _logger.info("=" * 80)
             return _error("VALIDATION_ERROR", str(exc), http_status=400)
 
         return _json_response(
@@ -367,15 +442,22 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
     def _create_pos_order_from_payload(
         self, payload, token_rec, pos_config, open_session, order_uuid, external_ref
     ):
+        _logger.info(f"🔄 [PDA ORDER] Resolviendo datos del pedido...")
+        
         partner = self._resolve_partner(payload)
         date_order = payload.get("date_order") or fields.Datetime.now()
         to_invoice = bool(payload.get("to_invoice", False))
         lines_payload = payload.get("lineas") if "lineas" in payload else payload.get("lines")
 
+        _logger.info(f"   - Partner: {partner.name if partner else 'Sin cliente'}")
+        _logger.info(f"   - to_invoice: {to_invoice}")
+        _logger.info(f"   - date_order: {date_order}")
+
         line_commands = []
         total_tax = 0.0
         total_incl = 0.0
-        for line_payload in lines_payload:
+        _logger.info(f"📋 [PDA ORDER] Procesando {len(lines_payload)} línea(s)...")
+        for idx, line_payload in enumerate(lines_payload, start=1):
             line_vals, tax_amount, total_amount = self._prepare_order_line_vals(
                 line_payload=line_payload,
                 partner=partner,
@@ -385,7 +467,12 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             line_commands.append((0, 0, line_vals))
             total_tax += tax_amount
             total_incl += total_amount
+            _logger.info(
+                f"     ✓ Línea {idx}: {line_vals['name'][:50]} "
+                f"(qty={line_vals['qty']}, total={total_amount:.2f})"
+            )
 
+        _logger.info(f"💾 [PDA ORDER] Guardando pedido en BD...")
         order_model = request.env["pos.order"].sudo().with_company(open_session.company_id)
         order = order_model.create(
             {
@@ -408,9 +495,10 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             }
         )
 
+        _logger.info(f"💳 [PDA ORDER] Procesando {len(payload.get('payments', []))} pago(s)...")
         payments = payload.get("payments", [])
         payment_total = 0.0
-        for payment in payments:
+        for idx, payment in enumerate(payments, start=1):
             payment_method = self._resolve_payment_method(payment, open_session)
             amount = float(payment.get("amount", 0.0) or 0.0)
             if amount <= 0:
