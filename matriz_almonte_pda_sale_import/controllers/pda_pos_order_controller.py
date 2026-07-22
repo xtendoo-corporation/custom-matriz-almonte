@@ -131,6 +131,19 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
 
         _logger.info(f"✅ [PDA ORDER] Token autenticado: {token_rec.name} (ID: {token_rec.id})")
 
+        # ====== LEER JSON RAW PRIMERO ======
+        payload_or_error = self._read_json_payload()
+        if isinstance(payload_or_error, dict) and payload_or_error.get("_error"):
+            err = payload_or_error["_error"]
+            _logger.warning(f"❌ [PDA ORDER] Error al leer payload: {err['code']} - {err['message']}")
+            return _error(
+                err["code"],
+                err["message"],
+                http_status=err["status"],
+                required_fields=self._required_payload_fields(),
+            )
+        payload = payload_or_error
+
         pos_config = token_rec.tienda_id
         if not pos_config:
             _logger.warning(f"❌ [PDA ORDER] Token {token_rec.name} sin POS configurado")
@@ -235,18 +248,16 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         _logger.info(f"└─ Usuario responsable: {open_session.user_id.name}")
         _logger.info(f"*" * 80)
 
-        # Leer y parsear el payload JSON
-        payload_or_error = self._read_json_payload()
-        if isinstance(payload_or_error, dict) and payload_or_error.get("_error"):
-            err = payload_or_error["_error"]
-            _logger.warning(f"❌ [PDA ORDER] Error al leer payload: {err['code']} - {err['message']}")
+        # Validar el payload
+        validation_error = self._validate_payload(payload)
+        if validation_error:
+            _logger.warning(f"❌ [PDA ORDER] Validación fallida: {validation_error}")
             return _error(
-                err["code"],
-                err["message"],
-                http_status=err["status"],
+                "VALIDATION_ERROR",
+                validation_error,
+                http_status=400,
                 required_fields=self._required_payload_fields(),
             )
-        payload = payload_or_error
 
         _logger.info(f"📦 [PDA ORDER] Payload recibido:")
         _logger.info(f"   - external_reference: {payload.get('external_reference')}")
