@@ -140,16 +140,25 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 http_status=400,
             )
 
-        _logger.info(f"🏪 [PDA ORDER] POS Config: {pos_config.name} (ID: {pos_config.id})")
+        _logger.info(f"🏪 [PDA ORDER] POS Asignado al Token: '{pos_config.name}' (ID: {pos_config.id})")
 
-        # Verificar que hay una sesión POS abierta
+        # ====== VERIFICACIÓN CRÍTICA: SESIÓN POS ABIERTA ======
+        _logger.info(f"🔍 [PDA ORDER] Verificando si sesión POS está ABIERTA...")
+        _logger.info(f"   ├─ Buscando en POS: {pos_config.name}")
+        _logger.info(f"   ├─ Criterios: config_id={pos_config.id} AND state='opened'")
+        
         open_session = self._get_open_session(pos_config)
+        
         if not open_session:
-            _logger.error(
-                f"❌ [PDA ORDER] NO HAY SESIÓN ABIERTA para {pos_config.name}. "
-                f"Estado actual: Estado de sesión cerrado o inexistente. "
-                f"Acción requerida: Abrir sesión desde Odoo 18"
-            )
+            _logger.error(f"*" * 80)
+            _logger.error(f"❌ [PDA ORDER] ¡¡SESIÓN POS CERRADA O NO EXISTE!!")
+            _logger.error(f"*" * 80)
+            _logger.error(f"Detalles del error:")
+            _logger.error(f"├─ Punto de Venta: {pos_config.name} (ID: {pos_config.id})")
+            _logger.error(f"├─ Token recibido: {token_rec.name} (ID: {token_rec.id})")
+            _logger.error(f"├─ Estado: NO HAY SESIÓN ABIERTA")
+            _logger.error(f"└─ Acción requerida: Abrir sesión en Odoo 18 primero")
+            _logger.error(f"*" * 80)
             return _error(
                 "SESSION_NOT_OPEN",
                 (
@@ -168,10 +177,16 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 required_fields=self._required_payload_fields(),
             )
 
-        _logger.info(
-            f"✅ [PDA ORDER] Sesión POS ABIERTA: {open_session.name} "
-            f"(ID: {open_session.id}, Estado: {open_session.state})"
-        )
+        _logger.info(f"*" * 80)
+        _logger.info(f"✅ [PDA ORDER] ¡¡SESIÓN POS ABIERTA Y LISTA!!")
+        _logger.info(f"*" * 80)
+        _logger.info(f"Detalles de la sesión:")
+        _logger.info(f"├─ Nombre sesión: {open_session.name}")
+        _logger.info(f"├─ ID sesión: {open_session.id}")
+        _logger.info(f"├─ Estado: {open_session.state} (OPENED)")
+        _logger.info(f"├─ Empresa: {open_session.company_id.name}")
+        _logger.info(f"└─ Usuario responsable: {open_session.user_id.name}")
+        _logger.info(f"*" * 80)
 
         # Leer y parsear el payload JSON
         payload_or_error = self._read_json_payload()
@@ -355,15 +370,15 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
     @staticmethod
     def _read_json_payload():
         raw_body = request.httprequest.get_data(as_text=False)
-        if len(raw_body) > _MAX_PAYLOAD_BYTES:
-            return {
-                "_error": {
-                    "code": "PAYLOAD_TOO_LARGE",
-                    "message": f"El payload supera el tamaño máximo permitido ({_MAX_PAYLOAD_BYTES // 1024} KB).",
-                    "status": 413,
-                }
-            }
+        
+        # Mostrar JSON raw con separador de asteriscos
+        _logger.info("*" * 80)
+        _logger.info("📨 [PDA ORDER] JSON RAW RECIBIDO DESDE PDA:")
+        _logger.info("*" * 80)
+        
         if not raw_body:
+            _logger.warning("⚠️  [PDA ORDER] Cuerpo de petición VACÍO")
+            _logger.info("*" * 80)
             return {
                 "_error": {
                     "code": "EMPTY_BODY",
@@ -371,9 +386,33 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                     "status": 400,
                 }
             }
+        
+        # Mostrar el JSON en formato legible
+        try:
+            raw_str = raw_body.decode("utf-8")
+            _logger.info(raw_str)
+            _logger.info("*" * 80)
+        except UnicodeDecodeError:
+            _logger.warning("⚠️  [PDA ORDER] No se puede decodificar JSON (encoding inválido)")
+            _logger.info("*" * 80)
+        
+        if len(raw_body) > _MAX_PAYLOAD_BYTES:
+            _logger.error(
+                f"❌ [PDA ORDER] Payload demasiado grande: "
+                f"{len(raw_body) // 1024} KB (máximo: {_MAX_PAYLOAD_BYTES // 1024} KB)"
+            )
+            return {
+                "_error": {
+                    "code": "PAYLOAD_TOO_LARGE",
+                    "message": f"El payload supera el tamaño máximo permitido ({_MAX_PAYLOAD_BYTES // 1024} KB).",
+                    "status": 413,
+                }
+            }
+        
         try:
             payload = json.loads(raw_body.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            _logger.error(f"❌ [PDA ORDER] JSON mal formado: {exc}")
             return {
                 "_error": {
                     "code": "INVALID_JSON",
