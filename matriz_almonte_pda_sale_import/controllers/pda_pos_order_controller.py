@@ -121,6 +121,9 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
     def pda_create_pos_order(self, **kwargs):
         """Crea un pedido POS desde un payload JSON externo."""
         _logger.info("=" * 80)
+        _logger.info("=" * 80)
+        _logger.info("=" * 80)
+        _logger.info("=" * 80)
         _logger.info("🔵 [PDA ORDER] Nueva petición de creación de pedido desde PDA")
         _logger.info(f"   IP del cliente: {_remote_ip()}")
 
@@ -175,7 +178,6 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         _logger.info("🏪 INFORMACIÓN DEL PUNTO DE VENTA:")
         _logger.info(f"   ├─ ID POS: {pos_config.id}")
         _logger.info(f"   ├─ Nombre: {pos_config.name}")
-        _logger.info(f"   ├─ Código: {pos_config.code or 'N/A'}")
         estado_pos = "✅ ACTIVO" if pos_config.active else "❌ INACTIVO"
         _logger.info(f"   ├─ Estado: {estado_pos}")
         empresa_nombre = pos_config.company_id.name if pos_config.company_id else 'N/A'
@@ -186,10 +188,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         _logger.info(f"   ├─ Almacén: {almacen_nombre} (ID: {almacen_id})")
         _logger.info(f"   ├─ Moneda: {pos_config.currency_id.name if pos_config.currency_id else 'N/A'}")
         tiene_sesion = "✅ SÍ" if pos_config.has_active_session else "❌ NO"
-        _logger.info(f"   ├─ Has Active Session: {tiene_sesion}")
-        _logger.info(f"   ├─ Current Session State: {pos_config.current_session_state or 'Sin sesión'}")
-        _logger.info(f"   ├─ Usuario POS Session: {pos_config.pos_session_username or 'N/A'}")
-        _logger.info(f"   └─ Duración Sesión: {pos_config.pos_session_duration or 'N/A'}")
+        _logger.info(f"   └─ Has Active Session: {tiene_sesion}")
         _logger.info("")
 
         _logger.info("📥 INFORMACIÓN DE IMPORTACIÓN:")
