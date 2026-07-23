@@ -580,27 +580,48 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             )
 
         _logger.info(f"💾 [PDA ORDER] Guardando pedido en BD...")
+        
+        # Preparar el diccionario de creación del pedido
+        order_dict = {
+            "name": "/",
+            "uuid": order_uuid,
+            "pos_reference": external_ref,
+            "session_id": open_session.id,
+            "user_id": token_rec.sale_user_id.id,
+            "company_id": open_session.company_id.id,
+            "partner_id": partner.id if partner else False,
+            "date_order": date_order,
+            "to_invoice": to_invoice,
+            "pricelist_id": pos_config.pricelist_id.id,
+            "fiscal_position_id": partner.property_account_position_id.id if partner else False,
+            "lines": line_commands,
+            "amount_tax": total_tax,
+            "amount_total": total_incl,
+            "amount_paid": 0.0,
+            "amount_return": 0.0,
+        }
+        
+        # Imprimir JSON usado para crear el pedido
+        import json
+        print("*" * 80)
+        print("*" * 80)
+        print("*" * 80)
+        print("*" * 80)
+        print("")
+        print("🔧 [PDA ORDER] JSON USADO PARA CREAR EL PEDIDO EN ODOO:")
+        print("")
+        # Crear una versión serializable del diccionario (sin line_commands que es complejo)
+        order_dict_display = order_dict.copy()
+        order_dict_display["lines"] = f"[{len(line_commands)} líneas de pedido]"
+        print(json.dumps(order_dict_display, indent=2, default=str, ensure_ascii=False))
+        print("")
+        print("*" * 80)
+        print("*" * 80)
+        print("*" * 80)
+        print("*" * 80)
+        
         order_model = request.env["pos.order"].sudo().with_company(open_session.company_id)
-        order = order_model.create(
-            {
-                "name": "/",
-                "uuid": order_uuid,
-                "pos_reference": external_ref,
-                "session_id": open_session.id,
-                "user_id": token_rec.sale_user_id.id,
-                "company_id": open_session.company_id.id,
-                "partner_id": partner.id if partner else False,
-                "date_order": date_order,
-                "to_invoice": to_invoice,
-                "pricelist_id": pos_config.pricelist_id.id,
-                "fiscal_position_id": partner.property_account_position_id.id if partner else False,
-                "lines": line_commands,
-                "amount_tax": total_tax,
-                "amount_total": total_incl,
-                "amount_paid": 0.0,
-                "amount_return": 0.0,
-            }
-        )
+        order = order_model.create(order_dict)
 
         _logger.info(f"💳 [PDA ORDER] Procesando {len(payload.get('payments', []))} pago(s)...")
         payments = payload.get("payments", [])
