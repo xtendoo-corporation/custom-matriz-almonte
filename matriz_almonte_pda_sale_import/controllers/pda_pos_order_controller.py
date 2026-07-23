@@ -123,7 +123,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         _logger.info("=" * 80)
         _logger.info("🔵 [PDA ORDER] Nueva petición de creación de pedido desde PDA")
         _logger.info(f"   IP del cliente: {_remote_ip()}")
-        
+
         token_rec, error_response = self._authenticate_token()
         if error_response:
             _logger.warning("❌ [PDA ORDER] Error de autenticación")
@@ -171,7 +171,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         _logger.info(f"   ├─ Importaciones totales: {token_rec.import_count}")
         _logger.info(f"   └─ Notas: {token_rec.notes or 'Sin notas'}")
         _logger.info("")
-        
+
         _logger.info("🏪 INFORMACIÓN DEL PUNTO DE VENTA:")
         _logger.info(f"   ├─ ID POS: {pos_config.id}")
         _logger.info(f"   ├─ Nombre: {pos_config.name}")
@@ -191,7 +191,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         _logger.info(f"   ├─ Usuario POS Session: {pos_config.pos_session_username or 'N/A'}")
         _logger.info(f"   └─ Duración Sesión: {pos_config.pos_session_duration or 'N/A'}")
         _logger.info("")
-        
+
         _logger.info("📥 INFORMACIÓN DE IMPORTACIÓN:")
         puede_importar = "✅ SÍ - Se aceptarán pedidos" if pos_config.active and token_rec.active else "❌ NO - Se rechazarán pedidos"
         _logger.info(f"   ├─ ¿IMPORTA?: {puede_importar}")
@@ -208,7 +208,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         if pos_config.active and token_rec.active and pos_config.has_active_session:
             _logger.info(f"   ├─ RAZÓN: TODO CORRECTO - Token y POS activos con sesión abierta")
             _logger.info(f"   │  └─ Acción: Se aceptarán los pedidos")
-        estado_final = "✅ APTO PARA CREAR PEDIDOS" if pos_config.active and token_rec.active else "❌ NO APTO - Revisar configuración"
+        estado_final = "✅ APTO PARA CREAR PEDIDOS" if pos_config.active and token_rec.active and pos_config.has_active_session else "❌ NO APTO - Revisar configuración"
         _logger.info(f"   └─ Estado Final: {estado_final}")
         _logger.info("*" * 80)
         _logger.info("")
@@ -217,9 +217,9 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         _logger.info(f"🔍 [PDA ORDER] Verificando si sesión POS está ABIERTA...")
         _logger.info(f"   ├─ Buscando en POS: {pos_config.name}")
         _logger.info(f"   ├─ Criterios: config_id={pos_config.id} AND state='opened'")
-        
+
         open_session = self._get_open_session(pos_config)
-        
+
         if not open_session:
             _logger.error(f"*" * 80)
             _logger.error(f"❌ [PDA ORDER] ¡¡SESIÓN POS CERRADA O NO EXISTE!!")
@@ -276,7 +276,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         _logger.info(f"   - partner_id: {payload.get('partner_id')}")
         _logger.info(f"   - to_invoice: {payload.get('to_invoice')}")
         _logger.info(f"   - mark_as_paid: {payload.get('mark_as_paid')}")
-        
+
         lineas = payload.get("lineas") if "lineas" in payload else payload.get("lines")
         _logger.info(f"   - Número de líneas: {len(lineas) if lineas else 0}")
         if lineas:
@@ -309,11 +309,11 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             str(payload.get("external_reference") or payload.get("uuid") or "").strip()
         )
         order_uuid = str(payload.get("uuid") or external_ref or uuid4())
-        
+
         _logger.info(f"🔍 [PDA ORDER] Buscando pedido duplicado...")
         _logger.info(f"   - external_ref: {external_ref}")
         _logger.info(f"   - order_uuid: {order_uuid}")
-        
+
         existing_order = request.env["pos.order"].sudo().search(
             [
                 ("session_id.config_id", "=", pos_config.id),
@@ -439,12 +439,12 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
     @staticmethod
     def _read_json_payload():
         raw_body = request.httprequest.get_data(as_text=False)
-        
+
         # Mostrar JSON raw con separador de asteriscos
         _logger.info("*" * 80)
         _logger.info("📨 [PDA ORDER] JSON RAW RECIBIDO DESDE PDA:")
         _logger.info("*" * 80)
-        
+
         if not raw_body:
             _logger.warning("⚠️  [PDA ORDER] Cuerpo de petición VACÍO")
             _logger.info("*" * 80)
@@ -455,7 +455,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                     "status": 400,
                 }
             }
-        
+
         # Mostrar el JSON en formato legible
         try:
             raw_str = raw_body.decode("utf-8")
@@ -464,7 +464,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         except UnicodeDecodeError:
             _logger.warning("⚠️  [PDA ORDER] No se puede decodificar JSON (encoding inválido)")
             _logger.info("*" * 80)
-        
+
         if len(raw_body) > _MAX_PAYLOAD_BYTES:
             _logger.error(
                 f"❌ [PDA ORDER] Payload demasiado grande: "
@@ -477,7 +477,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                     "status": 413,
                 }
             }
-        
+
         try:
             payload = json.loads(raw_body.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -551,7 +551,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         self, payload, token_rec, pos_config, open_session, order_uuid, external_ref
     ):
         _logger.info(f"🔄 [PDA ORDER] Resolviendo datos del pedido...")
-        
+
         partner = self._resolve_partner(payload)
         date_order = payload.get("date_order") or fields.Datetime.now()
         to_invoice = bool(payload.get("to_invoice", False))
