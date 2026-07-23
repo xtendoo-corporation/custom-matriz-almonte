@@ -199,9 +199,19 @@ class MatrizAlmonteApiToken(models.Model):
         if token_rec:
             # Actualizamos last_used_at sin pasar por el ORM completo para
             # no disparar recomputaciones innecesarias en cada petición.
-            token_rec.sudo().write(
-                {"last_used_at": fields.Datetime.now()}
-            )
+            # Ignoramos errores de concurrencia (múltiples peticiones simultáneas).
+            try:
+                token_rec.sudo().write(
+                    {"last_used_at": fields.Datetime.now()}
+                )
+            except Exception as e:
+                # Si hay error de concurrencia (concurrent update), lo ignoramos
+                # ya que no es crítico si este campo no se actualiza en esta petición
+                if "could not serialize access" not in str(e):
+                    _logger.warning(
+                        "Error al actualizar last_used_at del token %s: %s",
+                        token_rec.name, str(e)
+                    )
         return token_rec
 
     # -------------------------------------------------------------------------
