@@ -581,6 +581,23 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
 
         _logger.info(f"💾 [PDA ORDER] Guardando pedido en BD...")
         
+        # ========== IMPRIMIR JSON RECIBIDO DESDE LA PDA ==========
+        import json
+        print("*" * 80)
+        print("*" * 80)
+        print("*" * 80)
+        print("*" * 80)
+        print("")
+        print("📥 [PDA ORDER] JSON RECIBIDO DESDE LA PDA:")
+        print("")
+        print(json.dumps(payload, indent=2, default=str, ensure_ascii=False))
+        print("")
+        print("*" * 80)
+        print("*" * 80)
+        print("*" * 80)
+        print("*" * 80)
+        print("")
+        
         # Preparar el diccionario de creación del pedido
         order_dict = {
             "name": "/",
