@@ -1,5 +1,6 @@
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0)
 """Controlador HTTP para comprobar la conectividad de dispositivos externos."""
+
 import json
 import logging
 
@@ -87,8 +88,8 @@ class MatrizAlmontePdaConnectionTestController(http.Controller):
                 http_status=401,
             )
 
-        token_rec = request.env["matriz.almonte.api.token"].sudo().authenticate(
-            token_value
+        token_rec = (
+            request.env["matriz.almonte.api.token"].sudo().authenticate(token_value)
         )
         if not token_rec:
             _logger.warning(
@@ -105,7 +106,7 @@ class MatrizAlmontePdaConnectionTestController(http.Controller):
         pos_id = pos_config.id if pos_config else None
         sale_user_id = token_rec.sale_user_id.id if token_rec.sale_user_id else None
         sale_user_name = token_rec.sale_user_id.name if token_rec.sale_user_id else None
-        
+
         # Usuario por defecto de la sesión actual (si hay sesión abierta)
         default_user_id = None
         default_user_name = None

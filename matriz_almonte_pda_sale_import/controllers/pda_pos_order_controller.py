@@ -1,5 +1,6 @@
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0)
 """Controlador HTTP para consultar sesión POS y crear pedidos desde PDA."""
+
 import json
 import logging
 from uuid import uuid4
@@ -76,10 +77,14 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             )
 
         open_session = self._get_open_session(pos_config)
-        latest_session = request.env["pos.session"].sudo().search(
-            [("config_id", "=", pos_config.id)],
-            order="id desc",
-            limit=1,
+        latest_session = (
+            request.env["pos.session"]
+            .sudo()
+            .search(
+                [("config_id", "=", pos_config.id)],
+                order="id desc",
+                limit=1,
+            )
         )
         is_open = bool(open_session)
 
@@ -109,6 +114,79 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             status=200,
         )
 
+    @staticmethod
+    def _log_token_and_pos_info(token_rec, pos_config):
+        """Registra el diagnóstico completo del token y el POS en el log."""
+        _logger.info("*" * 80)
+        _logger.info("📋 [PDA ORDER] INFORMACIÓN DEL TOKEN Y PUNTO DE VENTA")
+        _logger.info("*" * 80)
+        _logger.info("")
+        _logger.info("🔑 INFORMACIÓN DEL TOKEN:")
+        _logger.info(f"   ├─ ID Token: {token_rec.id}")
+        _logger.info(f"   ├─ Nombre: {token_rec.name}")
+        _logger.info(f"   ├─ Código Dispositivo: {token_rec.device_code or 'N/A'}")
+        estado_token = "✅ ACTIVO" if token_rec.active else "❌ INACTIVO"
+        _logger.info(f"   ├─ Estado: {estado_token}")
+        usuario_nombre = (
+            token_rec.sale_user_id.name if token_rec.sale_user_id else "N/A"
+        )
+        usuario_id = token_rec.sale_user_id.id if token_rec.sale_user_id else "N/A"
+        _logger.info(f"   ├─ Usuario de Ventas: {usuario_nombre} (ID: {usuario_id})")
+        _logger.info(f"   ├─ Último uso: {token_rec.last_used_at or 'Nunca'}")
+        _logger.info(f"   ├─ Importaciones totales: {token_rec.import_count}")
+        _logger.info(f"   └─ Notas: {token_rec.notes or 'Sin notas'}")
+        _logger.info("")
+
+        _logger.info("🏪 INFORMACIÓN DEL PUNTO DE VENTA:")
+        _logger.info(f"   ├─ ID POS: {pos_config.id}")
+        _logger.info(f"   ├─ Nombre: {pos_config.name}")
+        estado_pos = "✅ ACTIVO" if pos_config.active else "❌ INACTIVO"
+        _logger.info(f"   ├─ Estado: {estado_pos}")
+        empresa_nombre = pos_config.company_id.name if pos_config.company_id else "N/A"
+        empresa_id = pos_config.company_id.id if pos_config.company_id else "N/A"
+        _logger.info(f"   ├─ Empresa: {empresa_nombre} (ID: {empresa_id})")
+        almacen_nombre = (
+            pos_config.warehouse_id.name if pos_config.warehouse_id else "N/A"
+        )
+        almacen_id = pos_config.warehouse_id.id if pos_config.warehouse_id else "N/A"
+        _logger.info(f"   ├─ Almacén: {almacen_nombre} (ID: {almacen_id})")
+        moneda_nombre = pos_config.currency_id.name if pos_config.currency_id else "N/A"
+        _logger.info(f"   ├─ Moneda: {moneda_nombre}")
+        tiene_sesion = "✅ SÍ" if pos_config.has_active_session else "❌ NO"
+        _logger.info(f"   └─ Has Active Session: {tiene_sesion}")
+        _logger.info("")
+
+        _logger.info("📥 INFORMACIÓN DE IMPORTACIÓN:")
+        puede_importar = (
+            "✅ SÍ - Se aceptarán pedidos"
+            if pos_config.active and token_rec.active
+            else "❌ NO - Se rechazarán pedidos"
+        )
+        _logger.info(f"   ├─ ¿IMPORTA?: {puede_importar}")
+        _logger.info("   │")
+        if not pos_config.active:
+            _logger.info("   ├─ RAZÓN: El Punto de Venta está INACTIVO")
+            _logger.info("   │  └─ Acción: Activar POS en configuración")
+        if not token_rec.active:
+            _logger.info("   ├─ RAZÓN: El Token está INACTIVO")
+            _logger.info("   │  └─ Acción: Activar token en configuración")
+        if pos_config.active and token_rec.active and not pos_config.has_active_session:
+            _logger.info("   ├─ RAZÓN: NO hay sesión POS abierta")
+            _logger.info("   │  └─ Acción: Se validará al intentar crear pedido")
+        if pos_config.active and token_rec.active and pos_config.has_active_session:
+            _logger.info(
+                "   ├─ RAZÓN: TODO CORRECTO - Token y POS activos con sesión abierta"
+            )
+            _logger.info("   │  └─ Acción: Se aceptarán los pedidos")
+        estado_final = (
+            "✅ APTO PARA CREAR PEDIDOS"
+            if pos_config.active and token_rec.active and pos_config.has_active_session
+            else "❌ NO APTO - Revisar configuración"
+        )
+        _logger.info(f"   └─ Estado Final: {estado_final}")
+        _logger.info("*" * 80)
+        _logger.info("")
+
     @http.route(
         _ORDER_ROUTE,
         type="http",
@@ -132,13 +210,19 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             _logger.warning("❌ [PDA ORDER] Error de autenticación")
             return error_response
 
-        _logger.info(f"✅ [PDA ORDER] Token autenticado: {token_rec.name} (ID: {token_rec.id})")
+        _logger.info(
+            f"✅ [PDA ORDER] Token autenticado: {token_rec.name} (ID: {token_rec.id})"
+        )
 
         # ====== LEER JSON RAW PRIMERO ======
         payload_or_error = self._read_json_payload()
         if isinstance(payload_or_error, dict) and payload_or_error.get("_error"):
             err = payload_or_error["_error"]
-            _logger.warning(f"❌ [PDA ORDER] Error al leer payload: {err['code']} - {err['message']}")
+            _logger.warning(
+                "❌ [PDA ORDER] Error al leer payload: %s - %s",
+                err["code"],
+                err["message"],
+            )
             return _error(
                 err["code"],
                 err["message"],
@@ -149,86 +233,34 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
 
         pos_config = token_rec.tienda_id
         if not pos_config:
-            _logger.warning(f"❌ [PDA ORDER] Token {token_rec.name} sin POS configurado")
+            _logger.warning(
+                f"❌ [PDA ORDER] Token {token_rec.name} sin POS configurado"
+            )
             return _error(
                 "TOKEN_WITHOUT_POS",
                 "El token no tiene un Punto de Venta POS configurado.",
                 http_status=400,
             )
 
-        # ======== INFORMACIÓN COMPLETA DEL TOKEN Y POS ========
-        _logger.info("*" * 80)
-        _logger.info("📋 [PDA ORDER] INFORMACIÓN DEL TOKEN Y PUNTO DE VENTA")
-        _logger.info("*" * 80)
-        _logger.info("")
-        _logger.info("🔑 INFORMACIÓN DEL TOKEN:")
-        _logger.info(f"   ├─ ID Token: {token_rec.id}")
-        _logger.info(f"   ├─ Nombre: {token_rec.name}")
-        _logger.info(f"   ├─ Código Dispositivo: {token_rec.device_code or 'N/A'}")
-        estado_token = "✅ ACTIVO" if token_rec.active else "❌ INACTIVO"
-        _logger.info(f"   ├─ Estado: {estado_token}")
-        usuario_nombre = token_rec.sale_user_id.name if token_rec.sale_user_id else 'N/A'
-        usuario_id = token_rec.sale_user_id.id if token_rec.sale_user_id else 'N/A'
-        _logger.info(f"   ├─ Usuario de Ventas: {usuario_nombre} (ID: {usuario_id})")
-        _logger.info(f"   ├─ Último uso: {token_rec.last_used_at or 'Nunca'}")
-        _logger.info(f"   ├─ Importaciones totales: {token_rec.import_count}")
-        _logger.info(f"   └─ Notas: {token_rec.notes or 'Sin notas'}")
-        _logger.info("")
-
-        _logger.info("🏪 INFORMACIÓN DEL PUNTO DE VENTA:")
-        _logger.info(f"   ├─ ID POS: {pos_config.id}")
-        _logger.info(f"   ├─ Nombre: {pos_config.name}")
-        estado_pos = "✅ ACTIVO" if pos_config.active else "❌ INACTIVO"
-        _logger.info(f"   ├─ Estado: {estado_pos}")
-        empresa_nombre = pos_config.company_id.name if pos_config.company_id else 'N/A'
-        empresa_id = pos_config.company_id.id if pos_config.company_id else 'N/A'
-        _logger.info(f"   ├─ Empresa: {empresa_nombre} (ID: {empresa_id})")
-        almacen_nombre = pos_config.warehouse_id.name if pos_config.warehouse_id else 'N/A'
-        almacen_id = pos_config.warehouse_id.id if pos_config.warehouse_id else 'N/A'
-        _logger.info(f"   ├─ Almacén: {almacen_nombre} (ID: {almacen_id})")
-        _logger.info(f"   ├─ Moneda: {pos_config.currency_id.name if pos_config.currency_id else 'N/A'}")
-        tiene_sesion = "✅ SÍ" if pos_config.has_active_session else "❌ NO"
-        _logger.info(f"   └─ Has Active Session: {tiene_sesion}")
-        _logger.info("")
-
-        _logger.info("📥 INFORMACIÓN DE IMPORTACIÓN:")
-        puede_importar = "✅ SÍ - Se aceptarán pedidos" if pos_config.active and token_rec.active else "❌ NO - Se rechazarán pedidos"
-        _logger.info(f"   ├─ ¿IMPORTA?: {puede_importar}")
-        _logger.info(f"   │")
-        if not pos_config.active:
-            _logger.info(f"   ├─ RAZÓN: El Punto de Venta está INACTIVO")
-            _logger.info(f"   │  └─ Acción: Activar POS en configuración")
-        if not token_rec.active:
-            _logger.info(f"   ├─ RAZÓN: El Token está INACTIVO")
-            _logger.info(f"   │  └─ Acción: Activar token en configuración")
-        if pos_config.active and token_rec.active and not pos_config.has_active_session:
-            _logger.info(f"   ├─ RAZÓN: NO hay sesión POS abierta")
-            _logger.info(f"   │  └─ Acción: Se validará al intentar crear pedido")
-        if pos_config.active and token_rec.active and pos_config.has_active_session:
-            _logger.info(f"   ├─ RAZÓN: TODO CORRECTO - Token y POS activos con sesión abierta")
-            _logger.info(f"   │  └─ Acción: Se aceptarán los pedidos")
-        estado_final = "✅ APTO PARA CREAR PEDIDOS" if pos_config.active and token_rec.active and pos_config.has_active_session else "❌ NO APTO - Revisar configuración"
-        _logger.info(f"   └─ Estado Final: {estado_final}")
-        _logger.info("*" * 80)
-        _logger.info("")
+        self._log_token_and_pos_info(token_rec, pos_config)
 
         # ====== VERIFICACIÓN CRÍTICA: SESIÓN POS ABIERTA ======
-        _logger.info(f"🔍 [PDA ORDER] Verificando si sesión POS está ABIERTA...")
+        _logger.info("🔍 [PDA ORDER] Verificando si sesión POS está ABIERTA...")
         _logger.info(f"   ├─ Buscando en POS: {pos_config.name}")
         _logger.info(f"   ├─ Criterios: config_id={pos_config.id} AND state='opened'")
 
         open_session = self._get_open_session(pos_config)
 
         if not open_session:
-            _logger.error(f"*" * 80)
-            _logger.error(f"❌ [PDA ORDER] ¡¡SESIÓN POS CERRADA O NO EXISTE!!")
-            _logger.error(f"*" * 80)
-            _logger.error(f"Detalles del error:")
+            _logger.error("*" * 80)
+            _logger.error("❌ [PDA ORDER] ¡¡SESIÓN POS CERRADA O NO EXISTE!!")
+            _logger.error("*" * 80)
+            _logger.error("Detalles del error:")
             _logger.error(f"├─ Punto de Venta: {pos_config.name} (ID: {pos_config.id})")
             _logger.error(f"├─ Token recibido: {token_rec.name} (ID: {token_rec.id})")
-            _logger.error(f"├─ Estado: NO HAY SESIÓN ABIERTA")
-            _logger.error(f"└─ Acción requerida: Abrir sesión en Odoo 18 primero")
-            _logger.error(f"*" * 80)
+            _logger.error("├─ Estado: NO HAY SESIÓN ABIERTA")
+            _logger.error("└─ Acción requerida: Abrir sesión en Odoo 18 primero")
+            _logger.error("*" * 80)
             return _error(
                 "SESSION_NOT_OPEN",
                 (
@@ -247,16 +279,16 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 required_fields=self._required_payload_fields(),
             )
 
-        _logger.info(f"*" * 80)
-        _logger.info(f"✅ [PDA ORDER] ¡¡SESIÓN POS ABIERTA Y LISTA!!")
-        _logger.info(f"*" * 80)
-        _logger.info(f"Detalles de la sesión:")
+        _logger.info("*" * 80)
+        _logger.info("✅ [PDA ORDER] ¡¡SESIÓN POS ABIERTA Y LISTA!!")
+        _logger.info("*" * 80)
+        _logger.info("Detalles de la sesión:")
         _logger.info(f"├─ Nombre sesión: {open_session.name}")
         _logger.info(f"├─ ID sesión: {open_session.id}")
         _logger.info(f"├─ Estado: {open_session.state} (OPENED)")
         _logger.info(f"├─ Empresa: {open_session.company_id.name}")
         _logger.info(f"└─ Usuario responsable: {open_session.user_id.name}")
-        _logger.info(f"*" * 80)
+        _logger.info("*" * 80)
 
         # Validar el payload
         validation_error = self._validate_payload(payload)
@@ -269,7 +301,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 required_fields=self._required_payload_fields(),
             )
 
-        _logger.info(f"📦 [PDA ORDER] Payload recibido:")
+        _logger.info("📦 [PDA ORDER] Payload recibido:")
         _logger.info(f"   - external_reference: {payload.get('external_reference')}")
         _logger.info(f"   - uuid: {payload.get('uuid')}")
         _logger.info(f"   - partner_id: {payload.get('partner_id')}")
@@ -280,18 +312,32 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         _logger.info(f"   - Número de líneas: {len(lineas) if lineas else 0}")
         if lineas:
             for idx, line in enumerate(lineas, start=1):
+                producto = (
+                    line.get("product_id")
+                    or line.get("default_code")
+                    or line.get("barcode")
+                    or line.get("id_articulo")
+                )
+                precio = line.get("price_unit", line.get("precio", "default"))
                 _logger.info(
-                    f"     Línea {idx}: producto={line.get('product_id') or line.get('default_code') or line.get('barcode') or line.get('id_articulo')}, "
-                    f"qty={line.get('qty')}, "
-                    f"price={line.get('price_unit', line.get('precio', 'default'))}, "
-                    f"discount={line.get('discount', 0)}%"
+                    "     Línea %s: producto=%s, qty=%s, price=%s, discount=%s%%",
+                    idx,
+                    producto,
+                    line.get("qty"),
+                    precio,
+                    line.get("discount", 0),
                 )
 
         payments = payload.get("payments", [])
         _logger.info(f"   - Número de pagos: {len(payments)}")
         if payments:
             for idx, pmt in enumerate(payments, start=1):
-                _logger.info(f"     Pago {idx}: method={pmt.get('payment_method_id')}, amount={pmt.get('amount')}")
+                _logger.info(
+                    "     Pago %s: method=%s, amount=%s",
+                    idx,
+                    pmt.get("payment_method_id"),
+                    pmt.get("amount"),
+                )
 
         # Validar el payload
         validation_error = self._validate_payload(payload)
@@ -304,23 +350,27 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 required_fields=self._required_payload_fields(),
             )
 
-        external_ref = (
-            str(payload.get("external_reference") or payload.get("uuid") or "").strip()
-        )
+        external_ref = str(
+            payload.get("external_reference") or payload.get("uuid") or ""
+        ).strip()
         order_uuid = str(payload.get("uuid") or external_ref or uuid4())
 
-        _logger.info(f"🔍 [PDA ORDER] Buscando pedido duplicado...")
+        _logger.info("🔍 [PDA ORDER] Buscando pedido duplicado...")
         _logger.info(f"   - external_ref: {external_ref}")
         _logger.info(f"   - order_uuid: {order_uuid}")
 
-        existing_order = request.env["pos.order"].sudo().search(
-            [
-                ("session_id.config_id", "=", pos_config.id),
-                "|",
-                ("uuid", "=", order_uuid),
-                ("pos_reference", "=", external_ref),
-            ],
-            limit=1,
+        existing_order = (
+            request.env["pos.order"]
+            .sudo()
+            .search(
+                [
+                    ("session_id.config_id", "=", pos_config.id),
+                    "|",
+                    ("uuid", "=", order_uuid),
+                    ("pos_reference", "=", external_ref),
+                ],
+                limit=1,
+            )
         )
         if existing_order:
             _logger.warning(
@@ -332,7 +382,8 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                     "success": True,
                     "code": "DUPLICATE",
                     "message": (
-                        f"Ya existe un pedido POS con esa referencia (id={existing_order.id})."
+                        "Ya existe un pedido POS con esa referencia "
+                        f"(id={existing_order.id})."
                     ),
                     "order_id": existing_order.id,
                     "order_name": existing_order.name,
@@ -342,7 +393,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 status=200,
             )
 
-        _logger.info(f"📝 [PDA ORDER] Creando nuevo pedido POS...")
+        _logger.info("📝 [PDA ORDER] Creando nuevo pedido POS...")
         try:
             order = self._create_pos_order_from_payload(
                 payload=payload,
@@ -353,7 +404,9 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 external_ref=external_ref,
             )
             _logger.info(
-                f"✅ [PDA ORDER] PEDIDO CREADO EXITOSAMENTE: {order.name} (ID: {order.id})"
+                "✅ [PDA ORDER] PEDIDO CREADO EXITOSAMENTE: %s (ID: %s)",
+                order.name,
+                order.id,
             )
             _logger.info(f"   - external_reference: {external_ref}")
             _logger.info(f"   - Total: {order.amount_total} {order.currency_id.name}")
@@ -397,16 +450,19 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 None,
                 _error(
                     "MISSING_TOKEN",
-                    "Se requiere autenticación. Incluye 'Authorization: Bearer <token>'.",
+                    "Se requiere autenticación. "
+                    "Incluye 'Authorization: Bearer <token>'.",
                     http_status=401,
                 ),
             )
 
-        token_rec = request.env["matriz.almonte.api.token"].sudo().authenticate(
-            token_value
+        token_rec = (
+            request.env["matriz.almonte.api.token"].sudo().authenticate(token_value)
         )
         if not token_rec:
-            _logger.warning("PDA POS API: token inválido o inactivo desde %s", _remote_ip())
+            _logger.warning(
+                "PDA POS API: token inválido o inactivo desde %s", _remote_ip()
+            )
             return (
                 None,
                 _error(
@@ -419,20 +475,34 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
 
     @staticmethod
     def _get_open_session(pos_config):
-        return request.env["pos.session"].sudo().search(
-            [("config_id", "=", pos_config.id), ("state", "=", "opened")],
-            order="id desc",
-            limit=1,
+        return (
+            request.env["pos.session"]
+            .sudo()
+            .search(
+                [("config_id", "=", pos_config.id), ("state", "=", "opened")],
+                order="id desc",
+                limit=1,
+            )
         )
 
     @staticmethod
     def _required_payload_fields():
         return {
             "header_required": ["external_reference", "lineas"],
-            "line_required": ["product_id | default_code | barcode | id_articulo", "qty"],
+            "line_required": [
+                "product_id | default_code | barcode | id_articulo",
+                "qty",
+            ],
             "line_optional": ["price_unit", "discount", "description", "uuid"],
             "payment_optional": ["payment_method_id", "amount", "payment_date"],
-            "header_optional": ["uuid", "partner_id", "date_order", "to_invoice", "mark_as_paid", "payments"],
+            "header_optional": [
+                "uuid",
+                "partner_id",
+                "date_order",
+                "to_invoice",
+                "mark_as_paid",
+                "payments",
+            ],
         }
 
     @staticmethod
@@ -461,7 +531,9 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             _logger.info(raw_str)
             _logger.info("*" * 80)
         except UnicodeDecodeError:
-            _logger.warning("⚠️  [PDA ORDER] No se puede decodificar JSON (encoding inválido)")
+            _logger.warning(
+                "⚠️  [PDA ORDER] No se puede decodificar JSON (encoding inválido)"
+            )
             _logger.info("*" * 80)
 
         if len(raw_body) > _MAX_PAYLOAD_BYTES:
@@ -469,10 +541,13 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 f"❌ [PDA ORDER] Payload demasiado grande: "
                 f"{len(raw_body) // 1024} KB (máximo: {_MAX_PAYLOAD_BYTES // 1024} KB)"
             )
+            max_kb = _MAX_PAYLOAD_BYTES // 1024
             return {
                 "_error": {
                     "code": "PAYLOAD_TOO_LARGE",
-                    "message": f"El payload supera el tamaño máximo permitido ({_MAX_PAYLOAD_BYTES // 1024} KB).",
+                    "message": (
+                        f"El payload supera el tamaño máximo permitido ({max_kb} KB)."
+                    ),
                     "status": 413,
                 }
             }
@@ -513,7 +588,10 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         for idx, line in enumerate(lines, start=1):
             if not isinstance(line, dict):
                 return f"La línea {idx} no es un objeto JSON válido."
-            if not any(line.get(key) for key in ("product_id", "default_code", "barcode", "id_articulo")):
+            if not any(
+                line.get(key)
+                for key in ("product_id", "default_code", "barcode", "id_articulo")
+            ):
                 return (
                     f"Línea {idx}: debe indicar 'product_id', 'default_code', "
                     "'barcode' o 'id_articulo'."
@@ -549,12 +627,14 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
     def _create_pos_order_from_payload(
         self, payload, token_rec, pos_config, open_session, order_uuid, external_ref
     ):
-        _logger.info(f"🔄 [PDA ORDER] Resolviendo datos del pedido...")
+        _logger.info("🔄 [PDA ORDER] Resolviendo datos del pedido...")
 
         partner = self._resolve_partner(payload)
         date_order = payload.get("date_order") or fields.Datetime.now()
         to_invoice = bool(payload.get("to_invoice", False))
-        lines_payload = payload.get("lineas") if "lineas" in payload else payload.get("lines")
+        lines_payload = (
+            payload.get("lineas") if "lineas" in payload else payload.get("lines")
+        )
 
         _logger.info(f"   - Partner: {partner.name if partner else 'Sin cliente'}")
         _logger.info(f"   - to_invoice: {to_invoice}")
@@ -579,25 +659,13 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 f"(qty={line_vals['qty']}, total={total_amount:.2f})"
             )
 
-        _logger.info(f"💾 [PDA ORDER] Guardando pedido en BD...")
-        
-        # ========== IMPRIMIR JSON RECIBIDO DESDE LA PDA ==========
-        import json
-        print("*" * 80)
-        print("*" * 80)
-        print("*" * 80)
-        print("*" * 80)
-        print("")
-        print("📥 [PDA ORDER] JSON RECIBIDO DESDE LA PDA:")
-        print("")
-        print(json.dumps(payload, indent=2, default=str, ensure_ascii=False))
-        print("")
-        print("*" * 80)
-        print("*" * 80)
-        print("*" * 80)
-        print("*" * 80)
-        print("")
-        
+        _logger.info("💾 [PDA ORDER] Guardando pedido en BD...")
+
+        _logger.debug(
+            "[PDA ORDER] JSON recibido desde la PDA:\n%s",
+            json.dumps(payload, indent=2, default=str, ensure_ascii=False),
+        )
+
         # Preparar el diccionario de creación del pedido
         order_dict = {
             "name": "/",
@@ -610,51 +678,49 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             "date_order": date_order,
             "to_invoice": to_invoice,
             "pricelist_id": pos_config.pricelist_id.id,
-            "fiscal_position_id": partner.property_account_position_id.id if partner else False,
+            "fiscal_position_id": partner.property_account_position_id.id
+            if partner
+            else False,
             "lines": line_commands,
             "amount_tax": total_tax,
             "amount_total": total_incl,
             "amount_paid": 0.0,
             "amount_return": 0.0,
         }
-        
-        # Imprimir JSON usado para crear el pedido
-        import json
-        print("*" * 80)
-        print("*" * 80)
-        print("*" * 80)
-        print("*" * 80)
-        print("")
-        print("🔧 [PDA ORDER] JSON USADO PARA CREAR EL PEDIDO EN ODOO:")
-        print("")
-        # Crear una versión serializable del diccionario (sin line_commands que es complejo)
+
+        # Log del JSON usado para crear el pedido
         order_dict_display = order_dict.copy()
         order_dict_display["lines"] = f"[{len(line_commands)} líneas de pedido]"
-        print(json.dumps(order_dict_display, indent=2, default=str, ensure_ascii=False))
-        print("")
-        print("*" * 80)
-        print("*" * 80)
-        print("*" * 80)
-        print("*" * 80)
-        
-        order_model = request.env["pos.order"].sudo().with_company(open_session.company_id)
+        _logger.debug(
+            "[PDA ORDER] JSON usado para crear el pedido en Odoo:\n%s",
+            json.dumps(order_dict_display, indent=2, default=str, ensure_ascii=False),
+        )
+
+        order_model = (
+            request.env["pos.order"].sudo().with_company(open_session.company_id)
+        )
         order = order_model.create(order_dict)
 
-        _logger.info(f"💳 [PDA ORDER] Procesando {len(payload.get('payments', []))} pago(s)...")
+        _logger.info(
+            f"💳 [PDA ORDER] Procesando {len(payload.get('payments', []))} pago(s)..."
+        )
         payments = payload.get("payments", [])
         payment_total = 0.0
-        for idx, payment in enumerate(payments, start=1):
+        for _idx, payment in enumerate(payments, start=1):
             payment_method = self._resolve_payment_method(payment, open_session)
             amount = float(payment.get("amount", 0.0) or 0.0)
             if amount <= 0:
-                raise ValidationError("El importe del pago debe ser mayor que cero.")
+                raise ValidationError(
+                    request.env._("El importe del pago debe ser mayor que cero.")
+                )
             payment_total += amount
             order.add_payment(
                 {
                     "pos_order_id": order.id,
                     "payment_method_id": payment_method.id,
                     "amount": amount,
-                    "payment_date": payment.get("payment_date") or fields.Datetime.now(),
+                    "payment_date": payment.get("payment_date")
+                    or fields.Datetime.now(),
                     "uuid": str(payment.get("uuid") or uuid4()),
                 }
             )
@@ -663,13 +729,19 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
 
         mark_as_paid = bool(payload.get("mark_as_paid", False))
         if mark_as_paid:
-            if float_compare(
-                order.amount_paid,
-                order.amount_total,
-                precision_rounding=order.currency_id.rounding,
-            ) < 0:
+            if (
+                float_compare(
+                    order.amount_paid,
+                    order.amount_total,
+                    precision_rounding=order.currency_id.rounding,
+                )
+                < 0
+            ):
                 raise ValidationError(
-                    "Para cerrar el pedido como pagado, los pagos deben cubrir el total."
+                    request.env._(
+                        "Para cerrar el pedido como pagado, los pagos deben "
+                        "cubrir el total."
+                    )
                 )
             order.action_pos_order_paid()
 
@@ -682,7 +754,9 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             return request.env["res.partner"]
         partner = request.env["res.partner"].sudo().browse(int(partner_id))
         if not partner.exists():
-            raise ValidationError(f"El partner_id {partner_id} no existe.")
+            raise ValidationError(
+                request.env._("El partner_id %s no existe.", partner_id)
+            )
         return partner
 
     @staticmethod
@@ -693,16 +767,29 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             product = Product.browse(int(line_payload["product_id"]))
             product = product if product.exists() else False
         if not product and line_payload.get("default_code"):
-            product = Product.search([("default_code", "=", str(line_payload["default_code"]).strip())], limit=1)
+            product = Product.search(
+                [("default_code", "=", str(line_payload["default_code"]).strip())],
+                limit=1,
+            )
         if not product and line_payload.get("barcode"):
-            product = Product.search([("barcode", "=", str(line_payload["barcode"]).strip())], limit=1)
+            product = Product.search(
+                [("barcode", "=", str(line_payload["barcode"]).strip())], limit=1
+            )
         if not product and line_payload.get("id_articulo"):
-            product = Product.search([("default_code", "=", str(line_payload["id_articulo"]).strip())], limit=1)
+            product = Product.search(
+                [("default_code", "=", str(line_payload["id_articulo"]).strip())],
+                limit=1,
+            )
         if not product:
-            raise ValidationError("No se ha encontrado el producto de una de las líneas.")
+            raise ValidationError(
+                request.env._("No se ha encontrado el producto de una de las líneas.")
+            )
         if not product.active or not product.sale_ok:
             raise ValidationError(
-                f"El producto '{product.display_name}' no está activo o no es vendible."
+                request.env._(
+                    "El producto '%s' no está activo o no es vendible.",
+                    product.display_name,
+                )
             )
         return product
 
@@ -710,7 +797,9 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         product = self._resolve_product(line_payload)
         qty = float(line_payload.get("qty", line_payload.get("unidades")))
         price_unit = float(
-            line_payload.get("price_unit", line_payload.get("precio", product.lst_price))
+            line_payload.get(
+                "price_unit", line_payload.get("precio", product.lst_price)
+            )
             or 0.0
         )
         discount = float(line_payload.get("discount", 0.0) or 0.0)
@@ -718,7 +807,11 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         taxes = product.taxes_id.filtered_domain(
             request.env["account.tax"]._check_company_domain(company)
         )
-        fiscal_position = partner.property_account_position_id if partner else request.env["account.fiscal.position"]
+        fiscal_position = (
+            partner.property_account_position_id
+            if partner
+            else request.env["account.fiscal.position"]
+        )
         taxes_after_fpos = fiscal_position.map_tax(taxes) if fiscal_position else taxes
         unit_price_after_discount = price_unit * (1 - discount / 100.0)
         tax_data = taxes_after_fpos.compute_all(
@@ -750,15 +843,20 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         method_id = payment_payload.get("payment_method_id")
         if not method_id:
             raise ValidationError(
-                "Cada pago en 'payments' debe incluir 'payment_method_id'."
+                request.env._(
+                    "Cada pago en 'payments' debe incluir 'payment_method_id'."
+                )
             )
         payment_method = request.env["pos.payment.method"].sudo().browse(int(method_id))
         if not payment_method.exists():
             raise ValidationError(
-                f"El payment_method_id {method_id} no existe."
+                request.env._("El payment_method_id %s no existe.", method_id)
             )
         if payment_method not in open_session.config_id.payment_method_ids:
             raise ValidationError(
-                f"El método de pago '{payment_method.name}' no está permitido en este TPV."
+                request.env._(
+                    "El método de pago '%s' no está permitido en este TPV.",
+                    payment_method.name,
+                )
             )
         return payment_method

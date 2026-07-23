@@ -11,6 +11,7 @@ El endpoint es completamente stateless: no requiere sesión Odoo, cookies
 ni login de usuario.  Cualquier error devuelve JSON estructurado con el
 código HTTP adecuado.
 """
+
 import json
 import logging
 
@@ -32,6 +33,7 @@ _MAX_PAYLOAD_BYTES = 512 * 1024  # 512 KB — protección contra payloads enorme
 # ---------------------------------------------------------------------------
 # Helpers de respuesta
 # ---------------------------------------------------------------------------
+
 
 def _json_response(data, status=200):
     """Devuelve una ``Response`` JSON con cabeceras correctas."""
@@ -75,6 +77,7 @@ def _success(record, external_reference, message="OK", is_duplicate=False):
 # Controlador
 # ---------------------------------------------------------------------------
 
+
 class MatrizAlmontePdaSaleImportController(http.Controller):
     """Controlador de la API de importación de ventas PDA."""
 
@@ -83,11 +86,11 @@ class MatrizAlmontePdaSaleImportController(http.Controller):
     @http.route(
         _ROUTE,
         type="http",
-        auth="none",       # Sin sesión Odoo — autenticación propia por token
+        auth="none",  # Sin sesión Odoo — autenticación propia por token
         methods=["POST"],
-        csrf=False,        # API externa: CSRF no aplica
+        csrf=False,  # API externa: CSRF no aplica
         save_session=False,
-        cors="*",          # Permitir desde cualquier origen (PDA)
+        cors="*",  # Permitir desde cualquier origen (PDA)
     )
     def pda_sale_import(self, **kwargs):
         """Recibe, valida y almacena una operación de venta enviada por la PDA.
@@ -119,9 +122,7 @@ class MatrizAlmontePdaSaleImportController(http.Controller):
             )
 
         token_rec = (
-            request.env["matriz.almonte.api.token"]
-            .sudo()
-            .authenticate(token_value)
+            request.env["matriz.almonte.api.token"].sudo().authenticate(token_value)
         )
         if not token_rec:
             # No loguear el token recibido para no exponerlo en logs
@@ -176,7 +177,7 @@ class MatrizAlmontePdaSaleImportController(http.Controller):
                 .sudo()
                 .create_from_payload(payload, token_rec)
             )
-        except Exception as exc:
+        except Exception:
             _logger.exception(
                 "PDA API: error inesperado procesando external_ref=%s", external_ref
             )
@@ -281,7 +282,9 @@ class MatrizAlmontePdaSaleImportController(http.Controller):
             except (TypeError, ValueError):
                 return f"Línea {idx}: 'unidades' debe ser un número."
 
-            price_raw = line.get("precio") if "precio" in line else line.get("unit_price")
+            price_raw = (
+                line.get("precio") if "precio" in line else line.get("unit_price")
+            )
             if price_raw is None:
                 return f"Línea {idx}: campo obligatorio ausente 'precio'."
             try:

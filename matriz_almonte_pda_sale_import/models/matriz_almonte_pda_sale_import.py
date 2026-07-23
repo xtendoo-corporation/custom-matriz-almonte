@@ -6,6 +6,7 @@ Almacena tanto el payload JSON bruto como la información normalizada en campos
 relacionales, para facilitar auditoría, re-procesamiento y futura integración
 con ``sale.order`` o ``pos.order``.
 """
+
 import hashlib
 import json
 import logging
@@ -93,10 +94,10 @@ class MatrizAlmontePdaSaleImport(models.Model):
         help="Código del dispositivo PDA tal como lo envió.",
     )
     tienda_id = fields.Many2one(
-        related='token_id.tienda_id', # ¡OJO! Si tu campo de arriba no se llama 'token_id', cambia este nombre.
-        string='Punto de Venta',
+        related="token_id.tienda_id",  # ¡OJO! Si tu campo de arriba no se llama 'token_id', cambia este nombre.
+        string="Punto de Venta",
         store=True,
-        help='Punto de venta asociado al token de esta importación.'
+        help="Punto de venta asociado al token de esta importación.",
     )
     sale_user_id = fields.Many2one(
         related="token_id.sale_user_id",
@@ -242,9 +243,9 @@ class MatrizAlmontePdaSaleImport(models.Model):
         seq = self.env["ir.sequence"]
         for vals in vals_list:
             if vals.get("name", _("Nuevo")) == _("Nuevo"):
-                vals["name"] = seq.next_by_code(
-                    "matriz.almonte.pda.sale.import"
-                ) or _("Nuevo")
+                vals["name"] = seq.next_by_code("matriz.almonte.pda.sale.import") or _(
+                    "Nuevo"
+                )
         return super().create(vals_list)
 
     # ------------------------------------------------------------------
@@ -263,9 +264,7 @@ class MatrizAlmontePdaSaleImport(models.Model):
         payload_hash = hashlib.sha256(payload_json.encode()).hexdigest()
         # Soporte tanto para el campo 'uuid' del JSON real como 'external_reference' genérico
         external_ref = (
-            payload_dict.get("uuid")
-            or payload_dict.get("external_reference")
-            or ""
+            payload_dict.get("uuid") or payload_dict.get("external_reference") or ""
         )
 
         # -- Detección de duplicados ----------------------------------------
@@ -310,11 +309,14 @@ class MatrizAlmontePdaSaleImport(models.Model):
         # Formato de la PDA: "DD/MM/YYYY HH:MM:SS"  (p.ej. "15/02/2024 10:11:15")
         # Fallback a ISO si viene en otro formato.
         operation_dt = False
-        raw_dt = payload_dict.get("fecha_hora") or payload_dict.get("operation_datetime")
+        raw_dt = payload_dict.get("fecha_hora") or payload_dict.get(
+            "operation_datetime"
+        )
         if raw_dt:
             for fmt in ("%d/%m/%Y %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
                 try:
                     from datetime import datetime as _dt
+
                     operation_dt = _dt.strptime(str(raw_dt).strip(), fmt)
                     break
                 except ValueError:
@@ -361,10 +363,14 @@ class MatrizAlmontePdaSaleImport(models.Model):
                 {
                     "import_id": import_rec.id,
                     "sequence": int(line.get("numero", 0) or 0),
-                    "product_code": str(line.get("id_articulo", "") or line.get("product_code", "")).strip(),
+                    "product_code": str(
+                        line.get("id_articulo", "") or line.get("product_code", "")
+                    ).strip(),
                     "description": line.get("description", ""),
                     "qty": float(line.get("unidades", line.get("qty", 0)) or 0),
-                    "unit_price": float(line.get("precio", line.get("unit_price", 0)) or 0),
+                    "unit_price": float(
+                        line.get("precio", line.get("unit_price", 0)) or 0
+                    ),
                     "discount": float(line.get("discount", 0) or 0),
                     "line_uuid": str(line.get("uuid", "") or ""),
                 }

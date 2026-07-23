@@ -1,5 +1,6 @@
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0)
 """Modelo de líneas de importación PDA."""
+
 from odoo import api, fields, models
 
 
@@ -58,10 +59,10 @@ class MatrizAlmontePdaSaleImportLine(models.Model):
         help="Calculado: unidades × precio × (1 - descuento/100).",
     )
     tienda_id = fields.Many2one(
-        related='import_id.tienda_id', 
-        string='Punto de Venta',
+        related="import_id.tienda_id",
+        string="Punto de Venta",
         store=True,
-        help='Punto de venta al que pertenece esta línea de importación.'
+        help="Punto de venta al que pertenece esta línea de importación.",
     )
 
     @api.depends("qty", "unit_price", "discount")

@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8" ?>
 <odoo>
     <!-- ================================================================ -->
     <!-- VISTAS: matriz.almonte.pda.sale.import (cabecera)                 -->
@@ -9,30 +9,35 @@
         <field name="name">matriz.almonte.pda.sale.import.list</field>
         <field name="model">matriz.almonte.pda.sale.import</field>
         <field name="arch" type="xml">
-            <list string="Importaciones PDA"
-                  decoration-danger="state == 'error'"
-                  decoration-warning="state == 'duplicate'"
-                  decoration-success="state == 'processed'"
-                  decoration-info="state == 'received'"
-                  decoration-muted="state == 'draft'">
-                <field name="name" string="Referencia"/>
-                <field name="external_reference" string="UUID PDA"/>
-                <field name="received_at"/>
-                <field name="operation_datetime" optional="show"/>
-                <field name="salesperson_code" string="Usuario" optional="show"/>
-                <field name="sale_user_id" string="Usuario Ventas" optional="show"/>
-                <field name="payment_method" string="F.Pago" optional="show"/>
-                <field name="global_discount" string="Dto.%" optional="hide"/>
-                <field name="print_ticket" optional="hide"/>
-                <field name="total_amount" sum="Total"/>
-                <field name="line_count" string="Líneas"/>
-                <field name="token_id" optional="hide"/>
-                <field name="tienda_id" optional="show"/>
-                <field name="state" widget="badge"
-                       decoration-danger="state == 'error'"
-                       decoration-warning="state == 'duplicate'"
-                       decoration-success="state == 'processed'"
-                       decoration-info="state == 'received'"/>
+            <list
+                string="Importaciones PDA"
+                decoration-danger="state == 'error'"
+                decoration-warning="state == 'duplicate'"
+                decoration-success="state == 'processed'"
+                decoration-info="state == 'received'"
+                decoration-muted="state == 'draft'"
+            >
+                <field name="name" string="Referencia" />
+                <field name="external_reference" string="UUID PDA" />
+                <field name="received_at" />
+                <field name="operation_datetime" optional="show" />
+                <field name="salesperson_code" string="Usuario" optional="show" />
+                <field name="sale_user_id" string="Usuario Ventas" optional="show" />
+                <field name="payment_method" string="F.Pago" optional="show" />
+                <field name="global_discount" string="Dto.%" optional="hide" />
+                <field name="print_ticket" optional="hide" />
+                <field name="total_amount" sum="Total" />
+                <field name="line_count" string="Líneas" />
+                <field name="token_id" optional="hide" />
+                <field name="tienda_id" optional="show" />
+                <field
+                    name="state"
+                    widget="badge"
+                    decoration-danger="state == 'error'"
+                    decoration-warning="state == 'duplicate'"
+                    decoration-success="state == 'processed'"
+                    decoration-info="state == 'received'"
+                />
             </list>
         </field>
     </record>
@@ -44,110 +49,148 @@
         <field name="arch" type="xml">
             <form string="Importación PDA">
                 <header>
-                    <button name="action_retry_processing"
-                            string="Reintentar Procesamiento"
-                            type="object"
-                            class="btn-primary"
-                            confirm="¿Reintentar el procesamiento de este registro?"
-                            invisible="state != 'error'"
-                            groups="matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin"/>
-                    <field name="state" widget="statusbar"
-                           statusbar_visible="draft,received,processed"/>
+                    <button
+                        name="action_retry_processing"
+                        string="Reintentar Procesamiento"
+                        type="object"
+                        class="btn-primary"
+                        confirm="¿Reintentar el procesamiento de este registro?"
+                        invisible="state != 'error'"
+                        groups="matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin"
+                    />
+                    <field
+                        name="state"
+                        widget="statusbar"
+                        statusbar_visible="draft,received,processed"
+                    />
                 </header>
                 <sheet>
                     <div class="oe_button_box" name="button_box">
-                        <button name="action_view_lines"
-                                type="object"
-                                class="oe_stat_button"
-                                icon="fa-list">
-                            <field name="line_count" string="Líneas" widget="statinfo"/>
+                        <button
+                            name="action_view_lines"
+                            type="object"
+                            class="oe_stat_button"
+                            icon="fa-list"
+                        >
+                            <field
+                                name="line_count"
+                                string="Líneas"
+                                widget="statinfo"
+                            />
                         </button>
                     </div>
-                    <widget name="web_ribbon"
-                            title="Error"
-                            bg_color="text-bg-danger"
-                            invisible="state != 'error'"/>
-                    <widget name="web_ribbon"
-                            title="Duplicado"
-                            bg_color="text-bg-warning"
-                            invisible="state != 'duplicate'"/>
-                    <widget name="web_ribbon"
-                            title="Procesado"
-                            bg_color="text-bg-success"
-                            invisible="state != 'processed'"/>
+                    <widget
+                        name="web_ribbon"
+                        title="Error"
+                        bg_color="text-bg-danger"
+                        invisible="state != 'error'"
+                    />
+                    <widget
+                        name="web_ribbon"
+                        title="Duplicado"
+                        bg_color="text-bg-warning"
+                        invisible="state != 'duplicate'"
+                    />
+                    <widget
+                        name="web_ribbon"
+                        title="Procesado"
+                        bg_color="text-bg-success"
+                        invisible="state != 'processed'"
+                    />
                     <div class="oe_title">
-                        <label for="name"/>
+                        <label for="name" />
                         <h1>
-                            <field name="name" readonly="1"/>
+                            <field name="name" readonly="1" />
                         </h1>
                         <h4>
-                            <field name="external_reference"
-                                   placeholder="UUID de la operación PDA"
-                                   readonly="1"/>
+                            <field
+                                name="external_reference"
+                                placeholder="UUID de la operación PDA"
+                                readonly="1"
+                            />
                         </h4>
                     </div>
                     <group>
                         <group string="Recepción y Dispositivo">
-                            <field name="token_id" readonly="1"/>
-                            <field name="tienda_id" readonly="1"/>
-                            <field name="sale_user_id" readonly="1"/>
-                            <field name="pda_id" readonly="1"/>
-                            <field name="device_code" readonly="1"/>
-                            <field name="received_at" readonly="1"/>
-                            <field name="operation_datetime" readonly="1"/>
+                            <field name="token_id" readonly="1" />
+                            <field name="tienda_id" readonly="1" />
+                            <field name="sale_user_id" readonly="1" />
+                            <field name="pda_id" readonly="1" />
+                            <field name="device_code" readonly="1" />
+                            <field name="received_at" readonly="1" />
+                            <field name="operation_datetime" readonly="1" />
                         </group>
                         <group string="Operación">
-                            <field name="salesperson_code" readonly="1"/>
-                            <field name="customer_reference" readonly="1"/>
-                            <field name="payment_method" readonly="1"/>
-                            <field name="global_discount" readonly="1"/>
-                            <field name="print_ticket" readonly="1"/>
-                            <field name="total_amount" readonly="1"/>
-                            <field name="currency" readonly="1"/>
+                            <field name="salesperson_code" readonly="1" />
+                            <field name="customer_reference" readonly="1" />
+                            <field name="payment_method" readonly="1" />
+                            <field name="global_discount" readonly="1" />
+                            <field name="print_ticket" readonly="1" />
+                            <field name="total_amount" readonly="1" />
+                            <field name="currency" readonly="1" />
                         </group>
                     </group>
-                    <group string="Error de Procesamiento" invisible="not error_message">
-                        <field name="error_message" nolabel="1" readonly="1" class="text-danger"/>
+                    <group
+                        string="Error de Procesamiento"
+                        invisible="not error_message"
+                    >
+                        <field
+                            name="error_message"
+                            nolabel="1"
+                            readonly="1"
+                            class="text-danger"
+                        />
                     </group>
                     <group string="Observaciones" invisible="not notes">
-                        <field name="notes" nolabel="1" readonly="1"/>
+                        <field name="notes" nolabel="1" readonly="1" />
                     </group>
                     <!-- Líneas de importación -->
                     <notebook>
                         <page string="Líneas" name="lines">
                             <field name="line_ids" readonly="1">
                                 <list string="Líneas">
-                                    <field name="sequence" string="Nº"/>
-                                    <field name="product_code" string="Artículo"/>
-                                    <field name="description"/>
-                                    <field name="qty" string="Unidades"/>
-                                    <field name="unit_price" string="Precio"/>
-                                    <field name="discount" string="Dto. (%)"/>
-                                    <field name="line_uuid" optional="hide"/>
-                                    <field name="line_total" sum="Total"/>
+                                    <field name="sequence" string="Nº" />
+                                    <field name="product_code" string="Artículo" />
+                                    <field name="description" />
+                                    <field name="qty" string="Unidades" />
+                                    <field name="unit_price" string="Precio" />
+                                    <field name="discount" string="Dto. (%)" />
+                                    <field name="line_uuid" optional="hide" />
+                                    <field name="line_total" sum="Total" />
                                 </list>
                             </field>
                         </page>
                         <page string="Payload Original" name="raw">
-                            <field name="payload_raw" nolabel="1" readonly="1"
-                                   style="font-family: monospace; white-space: pre-wrap; font-size: 12px;"/>
+                            <field
+                                name="payload_raw"
+                                nolabel="1"
+                                readonly="1"
+                                style="font-family: monospace; white-space: pre-wrap; font-size: 12px;"
+                            />
                         </page>
                         <page string="Log de Procesamiento" name="log">
-                            <field name="processing_log" nolabel="1" readonly="1"
-                                   style="font-family: monospace; white-space: pre-wrap; font-size: 12px;"/>
+                            <field
+                                name="processing_log"
+                                nolabel="1"
+                                readonly="1"
+                                style="font-family: monospace; white-space: pre-wrap; font-size: 12px;"
+                            />
                         </page>
-                        <page string="Técnico" name="technical"
-                              groups="base.group_no_one">
+                        <page
+                            string="Técnico"
+                            name="technical"
+                            groups="base.group_no_one"
+                        >
                             <group>
-                                <field name="payload_hash" readonly="1"/>
+                                <field name="payload_hash" readonly="1" />
                             </group>
                         </page>
                     </notebook>
                 </sheet>
                 <div class="oe_chatter">
-                    <field name="message_follower_ids" widget="mail_followers"/>
-                    <field name="activity_ids" widget="mail_activity"/>
-                    <field name="message_ids" widget="mail_thread"/>
+                    <field name="message_follower_ids" widget="mail_followers" />
+                    <field name="activity_ids" widget="mail_activity" />
+                    <field name="message_ids" widget="mail_thread" />
                 </div>
             </form>
         </field>
@@ -159,42 +202,70 @@
         <field name="model">matriz.almonte.pda.sale.import</field>
         <field name="arch" type="xml">
             <search string="Buscar importaciones PDA">
-                <field name="name" string="Referencia Interna"/>
-                <field name="external_reference" string="UUID operación"/>
-                <field name="device_code" string="Código Dispositivo"/>
-                <field name="customer_reference" string="Referencia Cliente"/>
-                <field name="payment_method" string="Forma de Pago"/>
-                <field name="token_id" string="Token API"/>
-                <separator/>
-                <filter name="filter_error"
-                        string="Errores"
-                        domain="[('state', '=', 'error')]"/>
-                <filter name="filter_duplicate"
-                        string="Duplicadas"
-                        domain="[('state', '=', 'duplicate')]"/>
-                <filter name="filter_received"
-                        string="Recibidas"
-                        domain="[('state', '=', 'received')]"/>
-                <filter name="filter_processed"
-                        string="Procesadas"
-                        domain="[('state', '=', 'processed')]"/>
-                <separator/>
-                <filter name="filter_today"
-                        string="Recibidas Hoy"
-                        domain="[('received_at', '>=', datetime.datetime.combine(context_today(), datetime.time(0,0,0)))]"/>
+                <field name="name" string="Referencia Interna" />
+                <field name="external_reference" string="UUID operación" />
+                <field name="device_code" string="Código Dispositivo" />
+                <field name="customer_reference" string="Referencia Cliente" />
+                <field name="payment_method" string="Forma de Pago" />
+                <field name="token_id" string="Token API" />
+                <separator />
+                <filter
+                    name="filter_error"
+                    string="Errores"
+                    domain="[('state', '=', 'error')]"
+                />
+                <filter
+                    name="filter_duplicate"
+                    string="Duplicadas"
+                    domain="[('state', '=', 'duplicate')]"
+                />
+                <filter
+                    name="filter_received"
+                    string="Recibidas"
+                    domain="[('state', '=', 'received')]"
+                />
+                <filter
+                    name="filter_processed"
+                    string="Procesadas"
+                    domain="[('state', '=', 'processed')]"
+                />
+                <separator />
+                <filter
+                    name="filter_today"
+                    string="Recibidas Hoy"
+                    domain="[('received_at', '>=', datetime.datetime.combine(context_today(), datetime.time(0,0,0)))]"
+                />
                 <group expand="0" string="Agrupar por">
-                    <filter name="group_state" string="Estado"
-                            context="{'group_by': 'state'}"/>
-                    <filter name="group_device" string="Código Dispositivo"
-                            context="{'group_by': 'device_code'}"/>
-                    <filter name="group_payment" string="Forma de Pago"
-                            context="{'group_by': 'payment_method'}"/>
-                    <filter name="group_date" string="Fecha de Recepción"
-                            context="{'group_by': 'received_at:day'}"/>
-                    <filter name="group_token" string="Token API"
-                            context="{'group_by': 'token_id'}"/>
-                    <filter name="group_by_tienda" string="Punto de Venta" 
-                            context="{'group_by':'tienda_id'}"/>
+                    <filter
+                        name="group_state"
+                        string="Estado"
+                        context="{'group_by': 'state'}"
+                    />
+                    <filter
+                        name="group_device"
+                        string="Código Dispositivo"
+                        context="{'group_by': 'device_code'}"
+                    />
+                    <filter
+                        name="group_payment"
+                        string="Forma de Pago"
+                        context="{'group_by': 'payment_method'}"
+                    />
+                    <filter
+                        name="group_date"
+                        string="Fecha de Recepción"
+                        context="{'group_by': 'received_at:day'}"
+                    />
+                    <filter
+                        name="group_token"
+                        string="Token API"
+                        context="{'group_by': 'token_id'}"
+                    />
+                    <filter
+                        name="group_by_tienda"
+                        string="Punto de Venta"
+                        context="{'group_by':'tienda_id'}"
+                    />
                 </group>
             </search>
         </field>
@@ -205,7 +276,7 @@
         <field name="name">Importaciones PDA</field>
         <field name="res_model">matriz.almonte.pda.sale.import</field>
         <field name="view_mode">list,form</field>
-        <field name="search_view_id" ref="view_matriz_almonte_pda_sale_import_search"/>
+        <field name="search_view_id" ref="view_matriz_almonte_pda_sale_import_search" />
         <field name="context">{'search_default_filter_received': 1}</field>
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">
@@ -227,16 +298,16 @@
         <field name="model">matriz.almonte.pda.sale.import.line</field>
         <field name="arch" type="xml">
             <list string="Líneas de Importación PDA">
-                <field name="import_id" string="Importación"/>
-                <field name="sequence" string="Nº"/>
-                <field name="tienda_id" optional="show"/>
-                <field name="product_code" string="Artículo"/>
-                <field name="description"/>
-                <field name="qty" string="Unidades"/>
-                <field name="unit_price" string="Precio"/>
-                <field name="discount" string="Dto. (%)"/>
-                <field name="line_uuid" optional="hide"/>
-                <field name="line_total" sum="Total"/>
+                <field name="import_id" string="Importación" />
+                <field name="sequence" string="Nº" />
+                <field name="tienda_id" optional="show" />
+                <field name="product_code" string="Artículo" />
+                <field name="description" />
+                <field name="qty" string="Unidades" />
+                <field name="unit_price" string="Precio" />
+                <field name="discount" string="Dto. (%)" />
+                <field name="line_uuid" optional="hide" />
+                <field name="line_total" sum="Total" />
             </list>
         </field>
     </record>
@@ -248,24 +319,24 @@
             <form string="Línea de Importación PDA">
                 <sheet>
                     <div class="oe_title">
-                        <label for="product_code"/>
+                        <label for="product_code" />
                         <h1>
-                            <field name="product_code" readonly="1"/>
+                            <field name="product_code" readonly="1" />
                         </h1>
                     </div>
                     <group>
                         <group string="Importación">
-                            <field name="import_id" readonly="1"/>
-                            <field name="tienda_id" readonly="1"/>
-                            <field name="sequence" readonly="1"/>
-                            <field name="description" readonly="1"/>
-                            <field name="line_uuid" readonly="1"/>
+                            <field name="import_id" readonly="1" />
+                            <field name="tienda_id" readonly="1" />
+                            <field name="sequence" readonly="1" />
+                            <field name="description" readonly="1" />
+                            <field name="line_uuid" readonly="1" />
                         </group>
                         <group string="Importe">
-                            <field name="qty" readonly="1"/>
-                            <field name="unit_price" readonly="1"/>
-                            <field name="discount" readonly="1"/>
-                            <field name="line_total" readonly="1"/>
+                            <field name="qty" readonly="1" />
+                            <field name="unit_price" readonly="1" />
+                            <field name="discount" readonly="1" />
+                            <field name="line_total" readonly="1" />
                         </group>
                     </group>
                 </sheet>
@@ -278,18 +349,29 @@
         <field name="model">matriz.almonte.pda.sale.import.line</field>
         <field name="arch" type="xml">
             <search string="Buscar Líneas">
-                <field name="product_code"/>
-                <field name="import_id"/>
-                <field name="tienda_id"/>
+                <field name="product_code" />
+                <field name="import_id" />
+                <field name="tienda_id" />
                 <group expand="0" string="Agrupar Por">
-                    <filter string="Punto de Venta" name="group_by_tienda" context="{'group_by':'tienda_id'}"/>
-                    <filter string="Importación" name="group_by_import" context="{'group_by':'import_id'}"/>
+                    <filter
+                        string="Punto de Venta"
+                        name="group_by_tienda"
+                        context="{'group_by':'tienda_id'}"
+                    />
+                    <filter
+                        string="Importación"
+                        name="group_by_import"
+                        context="{'group_by':'import_id'}"
+                    />
                 </group>
             </search>
         </field>
     </record>
 
-    <record id="action_matriz_almonte_pda_sale_import_line" model="ir.actions.act_window">
+    <record
+        id="action_matriz_almonte_pda_sale_import_line"
+        model="ir.actions.act_window"
+    >
         <field name="name">Líneas de Importación PDA</field>
         <field name="res_model">matriz.almonte.pda.sale.import.line</field>
         <field name="view_mode">list,form</field>

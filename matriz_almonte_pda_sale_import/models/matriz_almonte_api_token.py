@@ -20,6 +20,7 @@ razones operativas:
 Si en el futuro se requiere mayor paranoia (acceso a BD comprometida), el
 campo se puede migrar a hash SHA-256 sin cambiar el contrato de la API.
 """
+
 import logging
 import secrets
 
@@ -43,10 +44,11 @@ class MatrizAlmonteApiToken(models.Model):
     name = fields.Char(
         string="Nombre / Descripción",
         required=True,
-        help="Nombre descriptivo del dispositivo o integración (p.ej. 'PDA-01 Almacén').",
+        help=(
+            "Nombre descriptivo del dispositivo o integración (p.ej. 'PDA-01 Almacén')."
+        ),
     )
     token = fields.Char(
-        string="Token",
         required=False,
         copy=False,
         help=(
@@ -81,8 +83,8 @@ class MatrizAlmonteApiToken(models.Model):
         help="Número total de importaciones recibidas con este token.",
     )
     tienda_id = fields.Many2one(
-        comodel_name='pos.config',
-        string='Punto de Venta',
+        comodel_name="pos.config",
+        string="Punto de Venta",
         help="Punto de venta/tienda en el que operará esta PDA.",
     )
     sale_user_id = fields.Many2one(
@@ -99,9 +101,7 @@ class MatrizAlmonteApiToken(models.Model):
     def _compute_import_count(self):
         ImportModel = self.env["matriz.almonte.pda.sale.import"]
         for token in self:
-            token.import_count = ImportModel.search_count(
-                [("token_id", "=", token.id)]
-            )
+            token.import_count = ImportModel.search_count([("token_id", "=", token.id)])
 
     # -------------------------------------------------------------------------
     # CRUD
@@ -137,13 +137,11 @@ class MatrizAlmonteApiToken(models.Model):
                     )
                 )
 
-    _sql_constraints = [
-        (
-            "token_unique",
-            "UNIQUE(token)",
-            "Ya existe un token con ese valor. Usa 'Regenerar Token' para obtener uno nuevo.",
-        ),
-    ]
+    _token_unique = models.Constraint(
+        "UNIQUE(token)",
+        "Ya existe un token con ese valor. "
+        "Usa 'Regenerar Token' para obtener uno nuevo.",
+    )
 
     # -------------------------------------------------------------------------
     # Actions / Buttons
@@ -201,16 +199,15 @@ class MatrizAlmonteApiToken(models.Model):
             # no disparar recomputaciones innecesarias en cada petición.
             # Ignoramos errores de concurrencia (múltiples peticiones simultáneas).
             try:
-                token_rec.sudo().write(
-                    {"last_used_at": fields.Datetime.now()}
-                )
+                token_rec.sudo().write({"last_used_at": fields.Datetime.now()})
             except Exception as e:
                 # Si hay error de concurrencia (concurrent update), lo ignoramos
                 # ya que no es crítico si este campo no se actualiza en esta petición
                 if "could not serialize access" not in str(e):
                     _logger.warning(
                         "Error al actualizar last_used_at del token %s: %s",
-                        token_rec.name, str(e)
+                        token_rec.name,
+                        str(e),
                     )
         return token_rec
 

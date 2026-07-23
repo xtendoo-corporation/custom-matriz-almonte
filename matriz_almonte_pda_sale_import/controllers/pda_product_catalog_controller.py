@@ -1,5 +1,6 @@
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0)
 """Controlador HTTP para exponer productos a dispositivos PDA."""
+
 import json
 import logging
 
@@ -82,8 +83,8 @@ class MatrizAlmontePdaProductCatalogController(http.Controller):
                 http_status=401,
             )
 
-        token_rec = request.env["matriz.almonte.api.token"].sudo().authenticate(
-            token_value
+        token_rec = (
+            request.env["matriz.almonte.api.token"].sudo().authenticate(token_value)
         )
         if not token_rec:
             _logger.warning(
@@ -96,9 +97,13 @@ class MatrizAlmontePdaProductCatalogController(http.Controller):
                 http_status=401,
             )
 
-        products = request.env["product.product"].sudo().search(
-            [("active", "=", True), ("sale_ok", "=", True)],
-            order="default_code, id",
+        products = (
+            request.env["product.product"]
+            .sudo()
+            .search(
+                [("active", "=", True), ("sale_ok", "=", True)],
+                order="default_code, id",
+            )
         )
 
         return _json_response(
