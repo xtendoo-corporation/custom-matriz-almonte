@@ -667,7 +667,6 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         # )
 
         # ========== IMPRIMIR JSON RECIBIDO DESDE LA PDA ==========
-        import json
         print("*" * 80)
         print("*" * 80)
         print("*" * 80)
@@ -706,7 +705,6 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         }
 
         # Imprimir JSON usado para crear el pedido
-        import json
         print("*" * 80)
         print("*" * 80)
         print("*" * 80)
