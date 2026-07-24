@@ -671,7 +671,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         print("*" * 80)
         print("*" * 80)
         print("*" * 80)
-        print("*" * 80)
+        print("prueba")
         print("")
         print("📥 [PDA ORDER] JSON RECIBIDO DESDE LA PDA:")
         print("")
