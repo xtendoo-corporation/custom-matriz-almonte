@@ -661,10 +661,27 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
 
         _logger.info("💾 [PDA ORDER] Guardando pedido en BD...")
 
-        _logger.debug(
-            "[PDA ORDER] JSON recibido desde la PDA:\n%s",
-            json.dumps(payload, indent=2, default=str, ensure_ascii=False),
-        )
+        # _logger.debug(
+        #     "[PDA ORDER] JSON recibido desde la PDA:\n%s",
+        #     json.dumps(payload, indent=2, default=str, ensure_ascii=False),
+        # )
+
+        # ========== IMPRIMIR JSON RECIBIDO DESDE LA PDA ==========
+        import json
+        print("*" * 80)
+        print("*" * 80)
+        print("*" * 80)
+        print("*" * 80)
+        print("")
+        print("📥 [PDA ORDER] JSON RECIBIDO DESDE LA PDA:")
+        print("")
+        print(json.dumps(payload, indent=2, default=str, ensure_ascii=False))
+        print("")
+        print("*" * 80)
+        print("*" * 80)
+        print("*" * 80)
+        print("*" * 80)
+        print("")
 
         # Preparar el diccionario de creación del pedido
         order_dict = {
@@ -688,13 +705,28 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             "amount_return": 0.0,
         }
 
+        # Imprimir JSON usado para crear el pedido
+        import json
+        print("*" * 80)
+        print("*" * 80)
+        print("*" * 80)
+        print("*" * 80)
+        print("")
+        print("🔧 [PDA ORDER] JSON USADO PARA CREAR EL PEDIDO EN ODOO:")
+        print("")
         # Log del JSON usado para crear el pedido
         order_dict_display = order_dict.copy()
         order_dict_display["lines"] = f"[{len(line_commands)} líneas de pedido]"
-        _logger.debug(
-            "[PDA ORDER] JSON usado para crear el pedido en Odoo:\n%s",
-            json.dumps(order_dict_display, indent=2, default=str, ensure_ascii=False),
-        )
+        # _logger.debug(
+        #     "[PDA ORDER] JSON usado para crear el pedido en Odoo:\n%s",
+        #     json.dumps(order_dict_display, indent=2, default=str, ensure_ascii=False),
+        # )
+        print(json.dumps(order_dict_display, indent=2, default=str, ensure_ascii=False))
+        print("")
+        print("*" * 80)
+        print("*" * 80)
+        print("*" * 80)
+        print("*" * 80)
 
         order_model = (
             request.env["pos.order"].sudo().with_company(open_session.company_id)
