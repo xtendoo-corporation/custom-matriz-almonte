@@ -311,6 +311,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         _logger.info(f"   - partner_id: {payload.get('partner_id')}")
         _logger.info(f"   - to_invoice: {payload.get('to_invoice')}")
         _logger.info(f"   - mark_as_paid: {payload.get('mark_as_paid')}")
+        _logger.info(f"   - amount_paid: {payload.get('amount_paid')}")
         _logger.info(f"   - is_printer: {self._is_print_requested(payload)}")
 
         lineas = payload.get("lineas") if "lineas" in payload else payload.get("lines")
@@ -370,9 +371,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             .search(
                 [
                     ("session_id.config_id", "=", pos_config.id),
-                    "|",
                     ("uuid", "=", order_uuid),
-                    ("pos_reference", "=", external_ref),
                 ],
                 limit=1,
             )
@@ -519,6 +518,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 "date_order",
                 "to_invoice",
                 "mark_as_paid",
+                "amount_paid",
                 "payment_method_id",
                 "fpago",
                 "is_printer",
@@ -644,6 +644,12 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         payments = payload.get("payments", [])
         if payments and not isinstance(payments, list):
             return "El campo 'payments' debe ser una lista."
+        amount_paid = payload.get("amount_paid")
+        if amount_paid is not None:
+            try:
+                float(amount_paid)
+            except (TypeError, ValueError):
+                return "El campo 'amount_paid' debe ser un número."
         return None
 
     def _create_pos_order_from_payload(
@@ -709,13 +715,13 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         order_dict = {
             "name": "/",
             "uuid": order_uuid,
-            "pos_reference": external_ref,
             "session_id": open_session.id,
             "user_id": token_rec.sale_user_id.id,
             "company_id": open_session.company_id.id,
             "partner_id": partner.id if partner else False,
             "date_order": date_order,
             "to_invoice": to_invoice,
+            "internal_note": f"PDA external_reference: {external_ref}",
             "pricelist_id": pos_config.pricelist_id.id,
             "fiscal_position_id": partner.property_account_position_id.id
             if partner
@@ -767,7 +773,6 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             ]
 
         _logger.info(f"💳 [PDA ORDER] Procesando {len(payments)} pago(s)...")
-        payment_total = 0.0
         for _idx, payment in enumerate(payments, start=1):
             payment_method = self._resolve_payment_method(payment, open_session)
             amount = float(payment.get("amount", 0.0) or 0.0)
@@ -775,7 +780,6 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 raise ValidationError(
                     request.env._("El importe del pago debe ser mayor que cero.")
                 )
-            payment_total += amount
             order.add_payment(
                 {
                     "pos_order_id": order.id,
@@ -1129,7 +1133,10 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         )
         return {
             "payment_method_id": payment_method.id,
-            "amount": order.amount_total,
+            "amount": MatrizAlmontePdaPosOrderController._resolve_auto_payment_amount(
+                payload=payload,
+                order=order,
+            ),
             "payment_date": payment_date or fields.Datetime.now(),
             "uuid": str(uuid4()),
         }
@@ -1163,6 +1170,18 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             selector=selector,
             open_session=open_session,
         )
+
+    @staticmethod
+    def _resolve_auto_payment_amount(payload, order):
+        amount_paid = payload.get("amount_paid")
+        if amount_paid in (None, ""):
+            return order.amount_total
+        try:
+            return float(amount_paid)
+        except (TypeError, ValueError):
+            raise ValidationError(
+                request.env._("El campo 'amount_paid' debe ser un número válido.")
+            ) from None
 
     @staticmethod
     def _resolve_payment_selector(selector, open_session):

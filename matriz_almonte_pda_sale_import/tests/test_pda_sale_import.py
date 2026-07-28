@@ -887,6 +887,60 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
         self.assertTrue(order.payment_ids)
         self.assertEqual(order.payment_ids[0].payment_method_id.id, method.id)
 
+    def test_38d_create_pos_order_uses_amount_paid_for_auto_payment(self):
+        """El amount_paid de cabecera se usa en el cobro automático."""
+        payload, status = self._call_pos_order_endpoint(
+            payload={
+                "external_reference": "PDA-POS-ORDER-AMOUNT-PAID-001",
+                "lineas": [
+                    {
+                        "product_id": self.product_export.id,
+                        "qty": 1,
+                        "price_unit": 12.0,
+                    }
+                ],
+                "amount_paid": 12.0,
+            },
+            headers={"Authorization": f"Bearer {self.token.token}"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["success"])
+        order = self.env["pos.order"].browse(payload["order_id"])
+        self.assertTrue(order.exists())
+        self.assertTrue(order.payment_ids)
+        self.assertAlmostEqual(order.payment_ids[0].amount, 12.0, places=2)
+        self.assertAlmostEqual(order.amount_paid, 12.0, places=2)
+
+    def test_38e_create_pos_order_uses_unique_pos_reference(self):
+        """Cada pedido debe tener su propia referencia POS única."""
+        payload_1, status_1 = self._call_pos_order_endpoint(
+            payload={
+                "external_reference": "PDA-POS-ORDER-REF-UNIQ-001",
+                "lineas": [{"product_id": self.product_export.id, "qty": 1}],
+            },
+            headers={"Authorization": f"Bearer {self.token.token}"},
+        )
+        payload_2, status_2 = self._call_pos_order_endpoint(
+            payload={
+                "external_reference": "PDA-POS-ORDER-REF-UNIQ-002",
+                "lineas": [{"product_id": self.product_export.id, "qty": 1}],
+            },
+            headers={"Authorization": f"Bearer {self.token.token}"},
+        )
+
+        self.assertEqual(status_1, 200)
+        self.assertEqual(status_2, 200)
+        self.assertTrue(payload_1["success"])
+        self.assertTrue(payload_2["success"])
+        order_1 = self.env["pos.order"].browse(payload_1["order_id"])
+        order_2 = self.env["pos.order"].browse(payload_2["order_id"])
+        self.assertTrue(order_1.exists())
+        self.assertTrue(order_2.exists())
+        self.assertTrue(order_1.pos_reference)
+        self.assertTrue(order_2.pos_reference)
+        self.assertNotEqual(order_1.pos_reference, order_2.pos_reference)
+
     def test_39_create_pos_order_skips_print_when_is_printer_false(self):
         """No debe lanzar impresión física cuando is_printer viene a false."""
         from ..controllers import pda_pos_order_controller
