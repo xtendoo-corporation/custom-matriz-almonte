@@ -519,6 +519,8 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 "date_order",
                 "to_invoice",
                 "mark_as_paid",
+                "payment_method_id",
+                "fpago",
                 "is_printer",
                 "imprimir",
                 "payments",
@@ -651,7 +653,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
 
         partner = self._resolve_partner(payload)
         date_order = payload.get("date_order") or fields.Datetime.now()
-        to_invoice = bool(payload.get("to_invoice", False))
+        to_invoice = self._coerce_bool(payload.get("to_invoice"), default=True)
         lines_payload = (
             payload.get("lineas") if "lineas" in payload else payload.get("lines")
         )
@@ -752,10 +754,19 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         )
         order = order_model.create(order_dict)
 
-        _logger.info(
-            f"💳 [PDA ORDER] Procesando {len(payload.get('payments', []))} pago(s)..."
-        )
-        payments = payload.get("payments", [])
+        mark_as_paid = self._coerce_bool(payload.get("mark_as_paid"), default=True)
+        payments = list(payload.get("payments", []))
+        if mark_as_paid and not payments:
+            payments = [
+                self._build_default_payment_payload(
+                    order=order,
+                    open_session=open_session,
+                    payment_date=date_order,
+                    payload=payload,
+                )
+            ]
+
+        _logger.info(f"💳 [PDA ORDER] Procesando {len(payments)} pago(s)...")
         payment_total = 0.0
         for _idx, payment in enumerate(payments, start=1):
             payment_method = self._resolve_payment_method(payment, open_session)
@@ -775,10 +786,8 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                     "uuid": str(payment.get("uuid") or uuid4()),
                 }
             )
-
         order._compute_prices()
 
-        mark_as_paid = bool(payload.get("mark_as_paid", False))
         if mark_as_paid:
             if (
                 float_compare(
@@ -1108,3 +1117,86 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 )
             )
         return payment_method
+
+    @staticmethod
+    def _build_default_payment_payload(order, open_session, payment_date, payload):
+        payment_method = (
+            MatrizAlmontePdaPosOrderController._resolve_payload_payment_method(
+                payload=payload,
+                open_session=open_session,
+            )
+            or MatrizAlmontePdaPosOrderController._default_payment_method(open_session)
+        )
+        return {
+            "payment_method_id": payment_method.id,
+            "amount": order.amount_total,
+            "payment_date": payment_date or fields.Datetime.now(),
+            "uuid": str(uuid4()),
+        }
+
+    @staticmethod
+    def _default_payment_method(open_session):
+        payment_methods = open_session.config_id.payment_method_ids
+        if not payment_methods:
+            raise ValidationError(
+                request.env._(
+                    "El TPV no tiene métodos de pago configurados para registrar "
+                    "el cobro automático del pedido."
+                )
+            )
+
+        if "is_cash_count" in payment_methods._fields:
+            cash_methods = payment_methods.filtered("is_cash_count")
+            if cash_methods:
+                return cash_methods[0]
+
+        return payment_methods[0]
+
+    @staticmethod
+    def _resolve_payload_payment_method(payload, open_session):
+        selector = payload.get("payment_method_id")
+        if selector in (None, ""):
+            selector = payload.get("fpago")
+        if selector in (None, ""):
+            return False
+        return MatrizAlmontePdaPosOrderController._resolve_payment_selector(
+            selector=selector,
+            open_session=open_session,
+        )
+
+    @staticmethod
+    def _resolve_payment_selector(selector, open_session):
+        payment_methods = open_session.config_id.payment_method_ids
+        if not payment_methods:
+            raise ValidationError(
+                request.env._(
+                    "El TPV no tiene métodos de pago configurados para registrar pagos."
+                )
+            )
+
+        normalized = str(selector).strip().lower()
+        if normalized.isdigit():
+            method_by_id = payment_methods.filtered(lambda m: m.id == int(normalized))
+            if method_by_id:
+                return method_by_id[0]
+
+        if normalized in {"1", "01", "cash", "efectivo"}:
+            cash_method = MatrizAlmontePdaPosOrderController._default_payment_method(
+                open_session
+            )
+            return cash_method
+
+        if normalized in {"2", "02", "card", "tarjeta"}:
+            if "is_cash_count" in payment_methods._fields:
+                non_cash_methods = payment_methods.filtered(lambda m: not m.is_cash_count)
+                if non_cash_methods:
+                    return non_cash_methods[0]
+            if len(payment_methods) > 1:
+                return payment_methods[1]
+            return payment_methods[0]
+
+        raise ValidationError(
+            request.env._(
+                "No se pudo resolver el método de pago '%s' para este TPV.", selector
+            )
+        )

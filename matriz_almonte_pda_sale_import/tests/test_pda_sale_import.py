@@ -802,6 +802,91 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
         self.assertEqual(order.user_id.id, self.token.sale_user_id.id)
         self.assertEqual(len(order.lines), 2)
 
+    def test_38b_create_pos_order_defaults_to_invoiced_and_paid(self):
+        """Los pedidos PDA deben quedar facturados y cobrados por defecto."""
+        session = self.env["pos.session"].search(
+            [("config_id", "=", self.tienda.id), ("state", "=", "opened")],
+            limit=1,
+        )
+        if not session:
+            session = self.env["pos.session"].create(
+                {
+                    "config_id": self.tienda.id,
+                    "user_id": self.env.user.id,
+                    "state": "opened",
+                }
+            )
+
+        self.assertTrue(
+            session.config_id.payment_method_ids,
+            "La configuración POS de pruebas necesita al menos un método de pago.",
+        )
+
+        payload, status = self._call_pos_order_endpoint(
+            payload={
+                "external_reference": "PDA-POS-ORDER-DEFAULT-PAID-001",
+                "lineas": [{"product_id": self.product_export.id, "qty": 1}],
+            },
+            headers={"Authorization": f"Bearer {self.token.token}"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["success"])
+        order = self.env["pos.order"].browse(payload["order_id"])
+        self.assertTrue(order.exists())
+        self.assertTrue(order.to_invoice)
+        self.assertEqual(order.session_id.id, session.id)
+        self.assertTrue(order.payment_ids)
+        self.assertAlmostEqual(order.amount_paid, order.amount_total, places=2)
+
+        invoice_field = next(
+            (
+                field_name
+                for field_name in ("account_move", "account_move_id", "invoice_id")
+                if field_name in order._fields
+            ),
+            False,
+        )
+        if invoice_field:
+            self.assertTrue(order[invoice_field])
+
+    def test_38c_create_pos_order_uses_header_payment_method_id(self):
+        """Debe respetar payment_method_id enviado en cabecera del payload."""
+        session = self.env["pos.session"].search(
+            [("config_id", "=", self.tienda.id), ("state", "=", "opened")],
+            limit=1,
+        )
+        if not session:
+            session = self.env["pos.session"].create(
+                {
+                    "config_id": self.tienda.id,
+                    "user_id": self.env.user.id,
+                    "state": "opened",
+                }
+            )
+
+        self.assertTrue(
+            session.config_id.payment_method_ids,
+            "La configuración POS de pruebas necesita al menos un método de pago.",
+        )
+        method = session.config_id.payment_method_ids[0]
+
+        payload, status = self._call_pos_order_endpoint(
+            payload={
+                "external_reference": "PDA-POS-ORDER-PMT-ID-001",
+                "lineas": [{"product_id": self.product_export.id, "qty": 1}],
+                "payment_method_id": method.id,
+            },
+            headers={"Authorization": f"Bearer {self.token.token}"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["success"])
+        order = self.env["pos.order"].browse(payload["order_id"])
+        self.assertTrue(order.exists())
+        self.assertTrue(order.payment_ids)
+        self.assertEqual(order.payment_ids[0].payment_method_id.id, method.id)
+
     def test_39_create_pos_order_skips_print_when_is_printer_false(self):
         """No debe lanzar impresión física cuando is_printer viene a false."""
         from ..controllers import pda_pos_order_controller
