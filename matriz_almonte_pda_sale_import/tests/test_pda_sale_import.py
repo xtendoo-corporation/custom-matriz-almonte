@@ -801,3 +801,79 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
         self.assertEqual(order.session_id.id, session.id)
         self.assertEqual(order.user_id.id, self.token.sale_user_id.id)
         self.assertEqual(len(order.lines), 2)
+
+    def test_39_create_pos_order_skips_print_when_is_printer_false(self):
+        """No debe lanzar impresión física cuando is_printer viene a false."""
+        from ..controllers import pda_pos_order_controller
+
+        with patch.object(
+            pda_pos_order_controller.MatrizAlmontePdaPosOrderController,
+            "_dispatch_order_print",
+            return_value={"printed": True},
+        ) as dispatch_print:
+            payload, status = self._call_pos_order_endpoint(
+                payload={
+                    "external_reference": "PDA-POS-ORDER-PRINT-FALSE-001",
+                    "lineas": [{"product_id": self.product_export.id, "qty": 1}],
+                    "is_printer": False,
+                },
+                headers={"Authorization": f"Bearer {self.token.token}"},
+            )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["success"])
+        self.assertFalse(payload["print_requested"])
+        self.assertFalse(payload["printed"])
+        dispatch_print.assert_not_called()
+
+    def test_40_create_pos_order_prints_when_is_printer_true(self):
+        """Debe disparar la impresión física cuando is_printer viene a true."""
+        from ..controllers import pda_pos_order_controller
+
+        with patch.object(
+            pda_pos_order_controller.MatrizAlmontePdaPosOrderController,
+            "_dispatch_order_print",
+            return_value={
+                "printed": True,
+                "print_url": "http://127.0.0.1:3211/print-raw",
+                "print_printer": "POS-80C",
+            },
+        ) as dispatch_print:
+            payload, status = self._call_pos_order_endpoint(
+                payload={
+                    "external_reference": "PDA-POS-ORDER-PRINT-TRUE-001",
+                    "lineas": [{"product_id": self.product_export.id, "qty": 1}],
+                    "is_printer": True,
+                },
+                headers={"Authorization": f"Bearer {self.token.token}"},
+            )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["success"])
+        self.assertTrue(payload["print_requested"])
+        self.assertTrue(payload["printed"])
+        self.assertEqual(payload["print_printer"], "POS-80C")
+        dispatch_print.assert_called_once()
+
+    def test_41_create_pos_order_supports_legacy_imprimir_flag(self):
+        """Debe seguir respetando el flag legado 'imprimir'."""
+        from ..controllers import pda_pos_order_controller
+
+        with patch.object(
+            pda_pos_order_controller.MatrizAlmontePdaPosOrderController,
+            "_dispatch_order_print",
+            return_value={"printed": True},
+        ) as dispatch_print:
+            payload, status = self._call_pos_order_endpoint(
+                payload={
+                    "external_reference": "PDA-POS-ORDER-PRINT-LEGACY-001",
+                    "lineas": [{"product_id": self.product_export.id, "qty": 1}],
+                    "imprimir": True,
+                },
+                headers={"Authorization": f"Bearer {self.token.token}"},
+            )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["success"])
+        self.assertTrue(payload["print_requested"])
+        dispatch_print.assert_called_once()

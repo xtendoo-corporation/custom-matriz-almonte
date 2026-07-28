@@ -3,7 +3,11 @@
 
 import json
 import logging
+import unicodedata
+from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
+
+import requests as http_requests
 
 from odoo import fields, http
 from odoo.exceptions import UserError, ValidationError
@@ -307,6 +311,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         _logger.info(f"   - partner_id: {payload.get('partner_id')}")
         _logger.info(f"   - to_invoice: {payload.get('to_invoice')}")
         _logger.info(f"   - mark_as_paid: {payload.get('mark_as_paid')}")
+        _logger.info(f"   - is_printer: {self._is_print_requested(payload)}")
 
         lineas = payload.get("lineas") if "lineas" in payload else payload.get("lines")
         _logger.info(f"   - Número de líneas: {len(lineas) if lineas else 0}")
@@ -373,6 +378,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             )
         )
         if existing_order:
+            print_requested = self._is_print_requested(payload)
             _logger.warning(
                 f"⚠️  [PDA ORDER] Pedido DUPLICADO detectado: "
                 f"{existing_order.name} (ID: {existing_order.id})"
@@ -389,6 +395,14 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                     "order_name": existing_order.name,
                     "external_reference": external_ref,
                     "session_id": existing_order.session_id.id,
+                    "print_requested": print_requested,
+                    "printed": False,
+                    "print_error": (
+                        "Pedido duplicado detectado. "
+                        "No se reimprime automáticamente."
+                    )
+                    if print_requested
+                    else False,
                 },
                 status=200,
             )
@@ -418,23 +432,27 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             _logger.info("=" * 80)
             return _error("VALIDATION_ERROR", str(exc), http_status=400)
 
-        return _json_response(
-            {
-                "success": True,
-                "code": "CREATED",
-                "message": "Pedido POS creado correctamente.",
-                "order_id": order.id,
-                "order_name": order.name,
-                "external_reference": external_ref,
-                "session_id": order.session_id.id,
-                "session_name": order.session_id.name,
-                "session_state": order.session_id.state,
-                "amount_total": order.amount_total,
-                "amount_paid": order.amount_paid,
-                "state": order.state,
-            },
-            status=200,
-        )
+        print_requested = self._is_print_requested(payload)
+        response_payload = {
+            "success": True,
+            "code": "CREATED",
+            "message": "Pedido POS creado correctamente.",
+            "order_id": order.id,
+            "order_name": order.name,
+            "external_reference": external_ref,
+            "session_id": order.session_id.id,
+            "session_name": order.session_id.name,
+            "session_state": order.session_id.state,
+            "amount_total": order.amount_total,
+            "amount_paid": order.amount_paid,
+            "state": order.state,
+            "print_requested": print_requested,
+            "printed": False,
+        }
+        if print_requested:
+            response_payload.update(self._dispatch_order_print(order, pos_config))
+
+        return _json_response(response_payload, status=200)
 
     def _authenticate_token(self):
         auth_header = request.httprequest.headers.get("Authorization", "")
@@ -501,6 +519,8 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 "date_order",
                 "to_invoice",
                 "mark_as_paid",
+                "is_printer",
+                "imprimir",
                 "payments",
             ],
         }
@@ -868,6 +888,203 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             tax_data["total_included"] - tax_data["total_excluded"],
             tax_data["total_included"],
         )
+
+    @staticmethod
+    def _coerce_bool(value, default=False):
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        if isinstance(value, (int, float)):
+            return bool(value)
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "t", "yes", "y", "si", "sí", "on"}:
+                return True
+            if normalized in {"0", "false", "f", "no", "n", "off", ""}:
+                return False
+        return default
+
+    @classmethod
+    def _is_print_requested(cls, payload):
+        if "is_printer" in payload:
+            return cls._coerce_bool(payload.get("is_printer"))
+        return cls._coerce_bool(payload.get("imprimir", False))
+
+    def _dispatch_order_print(self, order, pos_config):
+        bridge_config = self._get_print_bridge_config(pos_config)
+        if bridge_config.get("error"):
+            return {"printed": False, "print_error": bridge_config["error"]}
+
+        payload = {
+            "printer": bridge_config["printer_name"],
+            "hex_bytes": self._build_ticket_hex_bytes(order),
+            "doc_name": f"PDA_POS_{order.name or order.id}",
+        }
+        headers = {}
+        if bridge_config["api_key"]:
+            headers["x-api-key"] = bridge_config["api_key"]
+
+        last_error = "No se pudo imprimir el ticket."
+        for candidate_url in self._resolve_bridge_urls(bridge_config["print_url"]):
+            try:
+                response = http_requests.post(
+                    candidate_url,
+                    json=payload,
+                    headers=headers,
+                    timeout=10,
+                )
+            except http_requests.exceptions.RequestException as exc:
+                last_error = str(exc)
+                _logger.warning(
+                    "[PDA ORDER] Error enviando ticket a %s: %s",
+                    candidate_url,
+                    exc,
+                )
+                continue
+
+            try:
+                response_payload = response.json()
+            except ValueError:
+                response_payload = {}
+
+            if response.ok and response_payload.get("ok", True):
+                _logger.info(
+                    "[PDA ORDER] Ticket enviado a impresora para pedido %s mediante %s",
+                    order.name,
+                    candidate_url,
+                )
+                return {
+                    "printed": True,
+                    "print_url": candidate_url,
+                    "print_printer": bridge_config["printer_name"] or False,
+                    "print_response": response_payload
+                    or {"status_code": response.status_code},
+                }
+
+            last_error = response_payload.get("error") or (
+                f"HTTP {response.status_code} al imprimir el ticket."
+            )
+            _logger.warning(
+                "[PDA ORDER] El bridge devolvió error al imprimir pedido %s: %s",
+                order.name,
+                last_error,
+            )
+
+        return {
+            "printed": False,
+            "print_url": bridge_config["print_url"],
+            "print_printer": bridge_config["printer_name"] or False,
+            "print_error": last_error,
+        }
+
+    @staticmethod
+    def _normalize_bridge_base_url(raw_url):
+        if not raw_url:
+            return ""
+        parsed = urlsplit(raw_url.strip())
+        path = parsed.path or ""
+        for suffix in ("/open-drawer", "/print-raw", "/health"):
+            if path.endswith(suffix):
+                path = path[: -len(suffix)]
+                break
+        return urlunsplit((parsed.scheme, parsed.netloc, path.rstrip("/"), "", ""))
+
+    def _get_print_bridge_config(self, pos_config):
+        pos_fields = pos_config._fields
+        bridge_url = ""
+        if "cash_drawer_effective_url" in pos_fields:
+            bridge_url = pos_config.cash_drawer_effective_url or ""
+        elif "cash_drawer_bridge_url" in pos_fields:
+            bridge_url = pos_config.cash_drawer_bridge_url or ""
+        elif "cash_drawer_open_url" in pos_fields:
+            bridge_url = pos_config.cash_drawer_open_url or ""
+
+        bridge_url = self._normalize_bridge_base_url(bridge_url)
+        if not bridge_url:
+            return {
+                "error": (
+                    "No hay bridge de impresión configurado en el TPV. "
+                    "Configura la URL del bridge local en el POS."
+                )
+            }
+
+        return {
+            "print_url": f"{bridge_url}/print-raw",
+            "printer_name": (
+                pos_config.cash_drawer_printer_name
+                if "cash_drawer_printer_name" in pos_fields
+                else ""
+            )
+            or "",
+            "api_key": (
+                pos_config.cash_drawer_api_key
+                if "cash_drawer_api_key" in pos_fields
+                else ""
+            )
+            or "",
+        }
+
+    @staticmethod
+    def _resolve_bridge_urls(url):
+        try:
+            from odoo.addons.xtendoo_cash_drawer.controllers.cash_drawer import (
+                _resolve_url,
+            )
+        except ImportError:
+            return [url]
+        return _resolve_url(url)
+
+    @staticmethod
+    def _normalize_ticket_text(value):
+        normalized = unicodedata.normalize("NFKD", value or "")
+        return normalized.encode("ascii", "replace").decode("ascii")
+
+    def _build_ticket_hex_bytes(self, order):
+        company_name = self._normalize_ticket_text(order.company_id.name or "")
+        order_name = self._normalize_ticket_text(order.name or order.pos_reference or "")
+        order_ref = self._normalize_ticket_text(order.pos_reference or "")
+        date_order = (
+            fields.Datetime.to_string(order.date_order) if order.date_order else ""
+        )
+        separator = "-" * 42
+
+        lines = [
+            "\x1b@\x1ba\x01",
+            company_name,
+            "\x1ba\x00",
+            separator,
+            f"Pedido: {order_name}",
+        ]
+        if order_ref and order_ref != order_name:
+            lines.append(f"Ref: {order_ref}")
+        if date_order:
+            lines.append(f"Fecha: {date_order}")
+        if order.partner_id:
+            lines.append(
+                f"Cliente: {self._normalize_ticket_text(order.partner_id.display_name)}"
+            )
+        lines.append(separator)
+
+        for line in order.lines:
+            product_name = self._normalize_ticket_text(
+                line.full_product_name or line.product_id.display_name or line.name or ""
+            )
+            qty_text = f"{line.qty:g}"
+            total_text = f"{line.price_subtotal_incl:.2f}"
+            detail_text = f"{qty_text} x {line.price_unit:.2f}"
+            lines.append(product_name[:42])
+            lines.append(f"{detail_text[:30]:<30}{total_text:>12}")
+
+        lines.extend([separator, f"{'TOTAL':<30}{order.amount_total:>12.2f}"])
+
+        for payment in order.payment_ids:
+            payment_name = self._normalize_ticket_text(payment.payment_method_id.name or "")
+            lines.append(f"{payment_name[:30]:<30}{payment.amount:>12.2f}")
+
+        lines.extend(["", "", "\x1dV\x00"])
+        ticket_bytes = "\n".join(lines).encode("cp850", errors="replace")
+        return ",".join(f"{byte:02X}" for byte in ticket_bytes)
 
     @staticmethod
     def _resolve_payment_method(payment_payload, open_session):
