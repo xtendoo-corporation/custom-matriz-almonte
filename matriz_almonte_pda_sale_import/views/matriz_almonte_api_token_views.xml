@@ -128,7 +128,6 @@
     </record>
 
     <!-- Vista Búsqueda -->
-    <!-- TODO: Descomentar cuando se solucione el error en producción
     <record id="view_matriz_almonte_api_token_search" model="ir.ui.view">
         <field name="name">matriz.almonte.api.token.search</field>
         <field name="model">matriz.almonte.api.token</field>
@@ -139,24 +138,22 @@
             </search>
         </field>
     </record>
-    -->
 
-<!--    &lt;!&ndash; Acción ventana &ndash;&gt;-->
-<!--    <record id="action_matriz_almonte_api_token" model="ir.actions.act_window">-->
-<!--        <field name="name">Tokens de Acceso API</field>-->
-<!--        <field name="res_model">matriz.almonte.api.token</field>-->
-<!--        <field name="view_mode">list,form</field>-->
-<!--        &lt;!&ndash; TODO: Descomentar cuando se habilite la vista search &ndash;&gt;-->
-<!--        &lt;!&ndash; <field name="search_view_id" ref="view_matriz_almonte_api_token_search" /> &ndash;&gt;-->
-<!--        <field name="context">{}</field>-->
-<!--        <field name="help" type="html">-->
-<!--            <p class="o_view_nocontent_smiling_face">-->
-<!--                Crea el primer token de acceso para una PDA-->
-<!--            </p>-->
-<!--            <p>-->
-<!--                Los tokens permiten que los dispositivos PDA se autentiquen-->
-<!--                en la API sin necesidad de usuario ni contraseña de Odoo.-->
-<!--            </p>-->
-<!--        </field>-->
-<!--    </record>-->
+    <!-- Acción ventana -->
+    <record id="action_matriz_almonte_api_token" model="ir.actions.act_window">
+        <field name="name">Tokens de Acceso API</field>
+        <field name="res_model">matriz.almonte.api.token</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_matriz_almonte_api_token_search" />
+        <field name="context">{}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Crea el primer token de acceso para una PDA
+            </p>
+            <p>
+                Los tokens permiten que los dispositivos PDA se autentiquen
+                en la API sin necesidad de usuario ni contraseña de Odoo.
+            </p>
+        </field>
+    </record>
 </odoo>

@@ -235,7 +235,7 @@
                     string="Recibidas Hoy"
                     domain="[('received_at', '>=', datetime.datetime.combine(context_today(), datetime.time(0,0,0)))]"
                 />
-                <group string="Agrupar por">
+                <group name="group_by_pda">
                     <filter
                         name="group_state"
                         string="Estado"
@@ -352,7 +352,7 @@
                 <field name="product_code" />
                 <field name="import_id" />
                 <field name="tienda_id" />
-                <group string="Agrupar Por">
+                <group name="group_by_line">
                     <filter
                         string="Punto de Venta"
                         name="group_by_tienda"

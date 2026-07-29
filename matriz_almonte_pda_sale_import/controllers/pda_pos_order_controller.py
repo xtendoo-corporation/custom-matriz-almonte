@@ -408,14 +408,18 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
 
         _logger.info("📝 [PDA ORDER] Creando nuevo pedido POS...")
         try:
-            order = self._create_pos_order_from_payload(
-                payload=payload,
-                token_rec=token_rec,
-                pos_config=pos_config,
-                open_session=open_session,
-                order_uuid=order_uuid,
-                external_ref=external_ref,
-            )
+            # Savepoint para garantizar atomicidad: si falla la generación del
+            # albarán o de la factura simplificada, se revierten también el
+            # pedido y los pagos ya creados y no queda una venta a medias.
+            with request.env.cr.savepoint():
+                order = self._create_pos_order_from_payload(
+                    payload=payload,
+                    token_rec=token_rec,
+                    pos_config=pos_config,
+                    open_session=open_session,
+                    order_uuid=order_uuid,
+                    external_ref=external_ref,
+                )
             _logger.info(
                 "✅ [PDA ORDER] PEDIDO CREADO EXITOSAMENTE: %s (ID: %s)",
                 order.name,
@@ -445,6 +449,9 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             "amount_total": order.amount_total,
             "amount_paid": order.amount_paid,
             "state": order.state,
+            "invoice_id": order.account_move.id if order.account_move else False,
+            "invoice_name": order.account_move.name if order.account_move else False,
+            "picking_ids": order.picking_ids.ids,
             "print_requested": print_requested,
             "printed": False,
         }
@@ -657,7 +664,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
     ):
         _logger.info("🔄 [PDA ORDER] Resolviendo datos del pedido...")
 
-        partner = self._resolve_partner(payload)
+        partner = self._resolve_partner(payload, pos_config)
         date_order = payload.get("date_order") or fields.Datetime.now()
         to_invoice = self._coerce_bool(payload.get("to_invoice"), default=True)
         lines_payload = (
@@ -809,19 +816,31 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 )
             order.action_pos_order_paid()
 
+            # Cierre estándar del pedido: albarán de entrega + factura
+            # simplificada (account.move), igual que una venta POS normal.
+            order.matriz_almonte_generate_picking_and_invoice()
+
         return order
 
     @staticmethod
-    def _resolve_partner(payload):
+    def _resolve_partner(payload, pos_config):
         partner_id = payload.get("partner_id")
-        if not partner_id:
-            return request.env["res.partner"]
-        partner = request.env["res.partner"].sudo().browse(int(partner_id))
-        if not partner.exists():
-            raise ValidationError(
-                request.env._("El partner_id %s no existe.", partner_id)
-            )
-        return partner
+        if partner_id:
+            partner = request.env["res.partner"].sudo().browse(int(partner_id))
+            if not partner.exists():
+                raise ValidationError(
+                    request.env._("El partner_id %s no existe.", partner_id)
+                )
+            return partner
+        # Fallback 1: cliente por defecto del TPV (factura simplificada anónima).
+        if "default_partner_id" in pos_config._fields and pos_config.default_partner_id:
+            return pos_config.default_partner_id
+        # Fallback 2: consumidor final del módulo, para poder emitir la factura.
+        consumer = request.env.ref(
+            "matriz_almonte_pda_sale_import.partner_consumidor_final",
+            raise_if_not_found=False,
+        )
+        return consumer or request.env["res.partner"]
 
     @staticmethod
     def _resolve_product(line_payload):
@@ -1069,6 +1088,11 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             separator,
             f"Pedido: {order_name}",
         ]
+        if order.account_move:
+            lines.append(
+                f"Factura simpl.: "
+                f"{self._normalize_ticket_text(order.account_move.name or '')}"
+            )
         if order_ref and order_ref != order_name:
             lines.append(f"Ref: {order_ref}")
         if date_order:

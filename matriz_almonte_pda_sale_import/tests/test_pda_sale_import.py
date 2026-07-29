@@ -8,7 +8,7 @@ from xml.etree import ElementTree
 import psycopg2
 from werkzeug.wrappers import Response
 
-from odoo.exceptions import ValidationError
+from odoo.exceptions import UserError, ValidationError
 from odoo.tests.common import TransactionCase
 
 # ---------------------------------------------------------------------------
@@ -889,12 +889,15 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
 
     def test_38d_create_pos_order_uses_amount_paid_for_auto_payment(self):
         """El amount_paid de cabecera se usa en el cobro automático."""
+        self._ensure_open_session()
+        if not self.product_without_tax:
+            self.skipTest("No hay producto sin impuestos para validar amount_paid.")
         payload, status = self._call_pos_order_endpoint(
             payload={
                 "external_reference": "PDA-POS-ORDER-AMOUNT-PAID-001",
                 "lineas": [
                     {
-                        "product_id": self.product_export.id,
+                        "product_id": self.product_without_tax.id,
                         "qty": 1,
                         "price_unit": 12.0,
                     }
@@ -914,6 +917,7 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
 
     def test_38e_create_pos_order_uses_unique_pos_reference(self):
         """Cada pedido debe tener su propia referencia POS única."""
+        self._ensure_open_session()
         payload_1, status_1 = self._call_pos_order_endpoint(
             payload={
                 "external_reference": "PDA-POS-ORDER-REF-UNIQ-001",
@@ -943,6 +947,7 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
 
     def test_39_create_pos_order_skips_print_when_is_printer_false(self):
         """No debe lanzar impresión física cuando is_printer viene a false."""
+        self._ensure_open_session()
         from ..controllers import pda_pos_order_controller
 
         with patch.object(
@@ -967,6 +972,7 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
 
     def test_40_create_pos_order_prints_when_is_printer_true(self):
         """Debe disparar la impresión física cuando is_printer viene a true."""
+        self._ensure_open_session()
         from ..controllers import pda_pos_order_controller
 
         with patch.object(
@@ -996,6 +1002,7 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
 
     def test_41_create_pos_order_supports_legacy_imprimir_flag(self):
         """Debe seguir respetando el flag legado 'imprimir'."""
+        self._ensure_open_session()
         from ..controllers import pda_pos_order_controller
 
         with patch.object(
@@ -1016,3 +1023,171 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
         self.assertTrue(payload["success"])
         self.assertTrue(payload["print_requested"])
         dispatch_print.assert_called_once()
+
+    # ------------------------------------------------------------------
+    # Tests de finalización: albarán de entrega + factura simplificada
+    # ------------------------------------------------------------------
+
+    def _ensure_open_session(self):
+        """Devuelve una sesión POS abierta para la tienda de pruebas."""
+        session = self.env["pos.session"].search(
+            [("config_id", "=", self.tienda.id), ("state", "=", "opened")],
+            limit=1,
+        )
+        if not session:
+            session = self.env["pos.session"].create(
+                {
+                    "config_id": self.tienda.id,
+                    "user_id": self.env.user.id,
+                    "state": "opened",
+                }
+            )
+        return session
+
+    def test_42_paid_order_generates_simplified_invoice(self):
+        """Un pedido PDA pagado genera la factura simplificada (account.move)."""
+        self._ensure_open_session()
+
+        payload, status = self._call_pos_order_endpoint(
+            payload={
+                "external_reference": "PDA-POS-INVOICE-001",
+                "lineas": [
+                    {"product_id": self.product_export.id, "qty": 1, "price_unit": 12.0}
+                ],
+            },
+            headers={"Authorization": f"Bearer {self.token.token}"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["success"])
+        self.assertTrue(payload["invoice_id"])
+        self.assertEqual(payload["invoice_name"], payload["invoice_name"])
+
+        order = self.env["pos.order"].browse(payload["order_id"])
+        self.assertTrue(order.account_move)
+        self.assertEqual(order.account_move.move_type, "out_invoice")
+        self.assertEqual(order.account_move.state, "posted")
+        self.assertEqual(order.account_move.id, payload["invoice_id"])
+
+    def test_43_paid_order_generates_delivery_picking(self):
+        """Un pedido PDA pagado con producto almacenable genera el albarán."""
+        self._ensure_open_session()
+
+        storable = self.env["product.product"].create(
+            {
+                "name": "PDA Almacenable Test",
+                "type": "consu",
+                "is_storable": True,
+                "sale_ok": True,
+                "lst_price": 8.0,
+                "categ_id": self.product_export.categ_id.id,
+                "taxes_id": [(6, 0, self.product_export.taxes_id.ids)],
+            }
+        )
+
+        payload, status = self._call_pos_order_endpoint(
+            payload={
+                "external_reference": "PDA-POS-PICKING-001",
+                "lineas": [{"product_id": storable.id, "qty": 2, "price_unit": 8.0}],
+            },
+            headers={"Authorization": f"Bearer {self.token.token}"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["success"])
+        self.assertTrue(payload["picking_ids"])
+
+        order = self.env["pos.order"].browse(payload["order_id"])
+        self.assertTrue(order.picking_ids)
+        self.assertEqual(order.picking_ids.ids, payload["picking_ids"])
+
+    def test_44_partner_fallback_to_final_consumer(self):
+        """Sin cliente ni default, se usa el Consumidor Final para facturar."""
+        self._ensure_open_session()
+        if "default_partner_id" in self.tienda._fields:
+            self.tienda.default_partner_id = False
+        consumer = self.env.ref(
+            "matriz_almonte_pda_sale_import.partner_consumidor_final"
+        )
+
+        payload, status = self._call_pos_order_endpoint(
+            payload={
+                "external_reference": "PDA-POS-CONSUMER-001",
+                "lineas": [
+                    {"product_id": self.product_export.id, "qty": 1, "price_unit": 5.0}
+                ],
+            },
+            headers={"Authorization": f"Bearer {self.token.token}"},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["success"])
+
+        order = self.env["pos.order"].browse(payload["order_id"])
+        self.assertEqual(order.partner_id, consumer)
+        self.assertTrue(order.account_move)
+        self.assertEqual(order.account_move.partner_id, consumer)
+
+    def test_45_finalize_is_idempotent(self):
+        """Reejecutar la finalización no duplica factura ni albarán."""
+        self._ensure_open_session()
+
+        payload, status = self._call_pos_order_endpoint(
+            payload={
+                "external_reference": "PDA-POS-IDEMPOTENT-001",
+                "lineas": [
+                    {"product_id": self.product_export.id, "qty": 1, "price_unit": 7.0}
+                ],
+            },
+            headers={"Authorization": f"Bearer {self.token.token}"},
+        )
+
+        self.assertEqual(status, 200)
+        order = self.env["pos.order"].browse(payload["order_id"])
+        invoice = order.account_move
+        self.assertTrue(invoice)
+
+        same_invoice = order.matriz_almonte_generate_picking_and_invoice()
+        self.assertEqual(same_invoice, invoice)
+        self.assertEqual(order.account_move, invoice)
+
+    def test_46_finalize_failure_rolls_back_order(self):
+        """Si falla la finalización, no debe quedar pedido ni pagos a medias."""
+        self._ensure_open_session()
+
+        def _boom(order_self):
+            raise UserError("fallo simulado de facturación")
+
+        with patch.object(
+            type(self.env["pos.order"]),
+            "matriz_almonte_generate_picking_and_invoice",
+            _boom,
+        ):
+            payload, status = self._call_pos_order_endpoint(
+                payload={
+                    "external_reference": "PDA-POS-ROLLBACK-001",
+                    "uuid": "pda-pos-rollback-uuid-001",
+                    "lineas": [
+                        {
+                            "product_id": self.product_export.id,
+                            "qty": 1,
+                            "price_unit": 9.0,
+                        }
+                    ],
+                },
+                headers={"Authorization": f"Bearer {self.token.token}"},
+            )
+
+        self.assertEqual(status, 400)
+        self.assertFalse(payload["success"])
+        self.assertEqual(payload["code"], "VALIDATION_ERROR")
+
+        leftover = self.env["pos.order"].search(
+            [("uuid", "=", "pda-pos-rollback-uuid-001")]
+        )
+        self.assertFalse(
+            leftover,
+            "El pedido debe revertirse por completo cuando falla la finalización.",
+        )
+
+
