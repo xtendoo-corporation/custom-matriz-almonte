@@ -128,48 +128,27 @@
     </record>
 
     <!-- Vista Búsqueda -->
+    <!-- TODO: Descomentar cuando se solucione el error en producción
     <record id="view_matriz_almonte_api_token_search" model="ir.ui.view">
         <field name="name">matriz.almonte.api.token.search</field>
         <field name="model">matriz.almonte.api.token</field>
         <field name="arch" type="xml">
-            <search string="Buscar Tokens">
+            <search>
                 <field name="name" />
                 <field name="device_code" />
-                <field name="tienda_id" />
-                <field name="sale_user_id" />
-                <filter
-                    name="filter_active"
-                    string="Activos"
-                    domain="[('active', '=', True)]"
-                />
-                <filter
-                    name="filter_inactive"
-                    string="Inactivos"
-                    domain="[('active', '=', False)]"
-                />
-                <group expand="0" string="Agrupar por">
-                    <filter
-                        name="group_tienda"
-                        string="Punto de Venta"
-                        context="{'group_by': 'tienda_id'}"
-                    />
-                    <filter
-                        name="group_active"
-                        string="Estado"
-                        context="{'group_by': 'active'}"
-                    />
-                </group>
             </search>
         </field>
     </record>
+    -->
 
     <!-- Acción ventana -->
     <record id="action_matriz_almonte_api_token" model="ir.actions.act_window">
         <field name="name">Tokens de Acceso API</field>
         <field name="res_model">matriz.almonte.api.token</field>
         <field name="view_mode">list,form</field>
-        <field name="search_view_id" ref="view_matriz_almonte_api_token_search" />
-        <field name="context">{'search_default_filter_active': 1}</field>
+        <!-- TODO: Descomentar cuando se habilite la vista search -->
+        <!-- <field name="search_view_id" ref="view_matriz_almonte_api_token_search" /> -->
+        <field name="context">{}</field>
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">
                 Crea el primer token de acceso para una PDA
