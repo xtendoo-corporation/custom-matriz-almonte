@@ -133,20 +133,26 @@
         <field name="model">matriz.almonte.api.token</field>
         <field name="arch" type="xml">
             <search string="Buscar Tokens">
-                <field name="name" string="Nombre" />
-                <field name="device_code" string="Código Dispositivo" />
-                <separator />
+                <field name="name" />
+                <field name="device_code" />
+                <field name="tienda_id" />
+                <field name="sale_user_id" />
                 <filter
-                    name="active"
+                    name="filter_active"
                     string="Activos"
                     domain="[('active', '=', True)]"
                 />
                 <filter
-                    name="inactive"
+                    name="filter_inactive"
                     string="Inactivos"
                     domain="[('active', '=', False)]"
                 />
-                <group string="Agrupar por">
+                <group expand="0" string="Agrupar por">
+                    <filter
+                        name="group_tienda"
+                        string="Punto de Venta"
+                        context="{'group_by': 'tienda_id'}"
+                    />
                     <filter
                         name="group_active"
                         string="Estado"
@@ -163,7 +169,7 @@
         <field name="res_model">matriz.almonte.api.token</field>
         <field name="view_mode">list,form</field>
         <field name="search_view_id" ref="view_matriz_almonte_api_token_search" />
-        <field name="context">{'search_default_active': 1}</field>
+        <field name="context">{'search_default_filter_active': 1}</field>
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">
                 Crea el primer token de acceso para una PDA
