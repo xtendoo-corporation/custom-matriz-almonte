@@ -5,7 +5,7 @@
         "Recepción, validación y almacenamiento de operaciones de venta "
         "enviadas desde PDAs Android mediante API JSON protegida por token."
     ),
-    "version": "19.0.1.0.0",
+    "version": "19.0.1.0",
     "category": "Sales/Sales",
     "author": "Xtendoo",
     "website": "https://www.xtendoo.es",
