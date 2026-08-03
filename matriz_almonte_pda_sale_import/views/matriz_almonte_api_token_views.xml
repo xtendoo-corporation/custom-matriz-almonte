@@ -132,9 +132,45 @@
         <field name="name">matriz.almonte.api.token.search</field>
         <field name="model">matriz.almonte.api.token</field>
         <field name="arch" type="xml">
-            <search>
+            <search string="Buscar Tokens">
                 <field name="name" />
                 <field name="device_code" />
+                <field name="tienda_id" />
+                <field name="sale_user_id" />
+                <filter
+                    name="filter_active"
+                    string="Activos"
+                    domain="[('active', '=', True)]"
+                />
+                <filter
+                    name="filter_inactive"
+                    string="Inactivos"
+                    domain="[('active', '=', False)]"
+                />
+                <separator />
+                <!--
+                    En Odoo 19 el elemento <group> de una vista de búsqueda NO
+                    admite los atributos "string" ni "expand" (sólo "name" y los
+                    filtros hijos). Usarlos provoca un error de validación RNG
+                    ("Invalid view ... definition") al instalar/actualizar.
+                -->
+                <group name="group_by">
+                    <filter
+                        name="group_tienda"
+                        string="Punto de Venta"
+                        context="{'group_by': 'tienda_id'}"
+                    />
+                    <filter
+                        name="group_sale_user"
+                        string="Usuario de Ventas"
+                        context="{'group_by': 'sale_user_id'}"
+                    />
+                    <filter
+                        name="group_active"
+                        string="Estado"
+                        context="{'group_by': 'active'}"
+                    />
+                </group>
             </search>
         </field>
     </record>
@@ -145,7 +181,7 @@
         <field name="res_model">matriz.almonte.api.token</field>
         <field name="view_mode">list,form</field>
         <field name="search_view_id" ref="view_matriz_almonte_api_token_search" />
-        <field name="context">{}</field>
+        <field name="context">{'search_default_filter_active': 1}</field>
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">
                 Crea el primer token de acceso para una PDA
