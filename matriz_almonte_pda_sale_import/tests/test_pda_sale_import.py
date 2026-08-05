@@ -1286,4 +1286,95 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
         self.assertAlmostEqual(order.amount_total, 10.05, places=2)
         self.assertAlmostEqual(order.amount_paid, order.amount_total, places=2)
 
+    def test_48_line_prices_from_pda_are_tax_included(self):
+        """Los ``price_unit`` que envía la PDA vienen con impuestos incluidos.
+
+        Reproduce el bug real reportado: la PDA manda precios finales al
+        público (con IVA incluido) tanto en cada línea como en
+        ``amount_total``/``amount_paid`` de cabecera. Antes, el
+        controlador sumaba el impuesto POR ENCIMA de ``price_unit`` (como
+        si fuera un precio sin impuestos), inflando el total muy por
+        encima de lo que el cliente pagó realmente. Ahora debe calcular
+        la base imponible hacia atrás para que la suma de líneas coincida
+        con el importe que declara la PDA, incluso si el impuesto está
+        configurado como "no incluido en el precio" (exclusivo) en el
+        producto.
+        """
+        self._ensure_open_session()
+
+        tax_21 = self.env["account.tax"].create(
+            {
+                "name": "IVA 21% (test incluido)",
+                "amount": 21.0,
+                "amount_type": "percent",
+                "type_tax_use": "sale",
+                "price_include_override": "tax_excluded",
+            }
+        )
+        product_a = self.env["product.product"].create(
+            {
+                "name": "Producto A IVA 21% (test)",
+                "type": "consu",
+                "sale_ok": True,
+                "default_code": "TEST-010001",
+                "taxes_id": [(6, 0, [tax_21.id])],
+            }
+        )
+        product_b = self.env["product.product"].create(
+            {
+                "name": "Producto B IVA 21% (test)",
+                "type": "consu",
+                "sale_ok": True,
+                "default_code": "TEST-020002",
+                "taxes_id": [(6, 0, [tax_21.id])],
+            }
+        )
+
+        # Mismo payload (simplificado) que el reportado en producción:
+        # 2 x 0.75 + 2 x 24.2 = 49.9, con impuestos ya incluidos.
+        payload, status = self._call_pos_order_endpoint(
+            payload={
+                "external_reference": "PDA-POS-TAX-INCLUDED-001",
+                "amount_total": 49.9,
+                "amount_paid": 49.9,
+                "lines": [
+                    {
+                        "default_code": product_a.default_code,
+                        "qty": 2,
+                        "price_unit": 0.75,
+                        "discount": 0,
+                    },
+                    {
+                        "default_code": product_b.default_code,
+                        "qty": 2,
+                        "price_unit": 24.2,
+                        "discount": 0,
+                    },
+                ],
+                "to_invoice": True,
+                "is_printer": False,
+            },
+            headers={"Authorization": f"Bearer {self.token.token}"},
+        )
+
+        self.assertEqual(status, 200, payload)
+        self.assertTrue(payload["success"], payload)
+
+        order = self.env["pos.order"].browse(payload["order_id"])
+        # El total NO debe inflarse sumando IVA por encima: debe coincidir
+        # con lo que la PDA declaró como ya-con-impuestos.
+        self.assertAlmostEqual(order.amount_total, 49.9, places=2)
+        self.assertAlmostEqual(order.amount_paid, order.amount_total, places=2)
+        # El impuesto debe haberse extraído del total, no añadido:
+        # 49.9 - 49.9/1.21 ≈ 8.66, y en ningún caso ronda los ~10.48 que
+        # daría sumar un 21 % por encima de 49.9.
+        self.assertAlmostEqual(order.amount_tax, 49.9 - 49.9 / 1.21, places=1)
+        self.assertIn(order.state, ("paid", "done", "invoiced"))
+
+        line_a = order.lines.filtered(lambda l: l.product_id == product_a)
+        # price_unit almacenado debe quedar SIN impuestos
+        # (0.75 / 1.21 ≈ 0.6198), no el precio final recibido.
+        self.assertAlmostEqual(line_a.price_unit, 0.75 / 1.21, places=2)
+        self.assertAlmostEqual(line_a.price_subtotal_incl, 1.5, places=2)
+
 

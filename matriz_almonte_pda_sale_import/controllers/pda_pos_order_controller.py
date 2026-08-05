@@ -947,7 +947,21 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         )
         taxes_after_fpos = fiscal_position.map_tax(taxes) if fiscal_position else taxes
         unit_price_after_discount = price_unit * (1 - discount / 100.0)
-        tax_data = taxes_after_fpos.compute_all(
+
+        # La PDA envía SIEMPRE precios finales, con impuestos incluidos
+        # (tanto ``price_unit`` de cada línea como ``amount_total``/
+        # ``amount_paid`` de cabecera). Por eso forzamos
+        # ``force_price_include=True`` en el motor de impuestos: le
+        # indica a Odoo que ``unit_price_after_discount`` es el TOTAL ya
+        # con impuestos, y debe calcular hacia atrás la base imponible,
+        # en vez de sumar el impuesto por encima (que es lo que hacía
+        # antes, inflando el total muy por encima de lo que el cliente
+        # pagó realmente). Este comportamiento no depende de cómo esté
+        # configurado el campo "Incluido en el precio" del impuesto en
+        # el producto: se aplica siempre para esta integración.
+        tax_data = taxes_after_fpos.with_context(
+            force_price_include=True
+        ).compute_all(
             unit_price_after_discount,
             currency=pos_config.currency_id,
             quantity=qty,
@@ -955,12 +969,24 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             partner=partner if partner else False,
         )
 
+        # `price_unit` en ``pos.order.line`` se guarda SIN impuestos y
+        # ANTES de descuento (así lo hace el resto de Odoo: "Tax Excl."
+        # es ``price_subtotal`` = qty * price_unit * (1 - discount/100)).
+        # Como el ``price_unit`` recibido es CON impuestos, lo
+        # recalculamos a partir del total sin impuestos ya obtenido.
+        if qty and discount != 100:
+            price_unit_excl = (tax_data["total_excluded"] / qty) / (
+                1 - discount / 100.0
+            )
+        else:
+            price_unit_excl = 0.0
+
         return (
             {
                 "name": str(line_payload.get("description") or product.display_name),
                 "product_id": product.id,
                 "qty": qty,
-                "price_unit": price_unit,
+                "price_unit": price_unit_excl,
                 "discount": discount,
                 "tax_ids": [(6, 0, taxes.ids)],
                 "price_subtotal": tax_data["total_excluded"],
