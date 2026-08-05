@@ -8,6 +8,7 @@ from xml.etree import ElementTree
 import psycopg2
 from werkzeug.wrappers import Response
 
+from odoo import api
 from odoo.exceptions import UserError, ValidationError
 from odoo.tests.common import TransactionCase
 
@@ -62,15 +63,38 @@ class _FakeHttpRequest:
 
 
 class _FakeRequest:
-    """Sustituto mínimo de ``odoo.http.request`` para tests unitarios."""
+    """Sustituto mínimo de ``odoo.http.request`` para tests unitarios.
+
+    Todos los endpoints reales de estos controladores se publican con
+    ``auth="none"``. En producción, ``ir_http._auth_method_none``
+    reemplaza ``request.env`` por un entorno SIN usuario asociado
+    (``uid=None``, ``su=False``; ver ``odoo/addons/base/models/ir_http.py``).
+    Si no replicamos ese reseteo aquí, los tests usan por error el
+    entorno con el usuario real de ``TransactionCase`` (con ``su``/``uid``
+    válidos), lo que oculta bugs como el de
+    ``ValueError: Expected singleton: res.users()`` que solo ocurren
+    cuando código del controlador accede a un recordset que no está
+    forzado a ``sudo()``.
+    """
 
     def __init__(self, env, headers=None, remote_addr="127.0.0.1", body=b""):
-        self.env = env
+        self.env = api.Environment(env.cr, None, env.context)
         self.httprequest = _FakeHttpRequest(
             headers=headers,
             remote_addr=remote_addr,
             body=body,
         )
+
+    def update_env(self, user=None, context=None, su=None):
+        """Réplica mínima de ``odoo.http.Request.update_env``.
+
+        Los controladores reales usan ``request.update_env(...)`` para
+        vincular la petición a un usuario real tras autenticar el token
+        (ver ``pda_pos_order_controller._authenticate_token``). Sin este
+        método, el ``patch.object`` de los tests no podría ejercitar ese
+        camino de código.
+        """
+        self.env = self.env(None, user, context, su)
 
     @staticmethod
     def make_response(body, headers=None, status=200):

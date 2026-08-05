@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import requests as http_requests
 
-from odoo import fields, http
+from odoo import SUPERUSER_ID, fields, http
 from odoo.exceptions import UserError, ValidationError
 from odoo.http import request
 from odoo.tools import float_compare
@@ -495,6 +495,26 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                     http_status=401,
                 ),
             )
+
+        # Esta ruta se publica con auth="none", por lo que Odoo reinicia
+        # `request.env` dejando `uid=None` (ver
+        # `ir_http._auth_method_none`). El problema es que `sudo()` NO
+        # cambia el uid, solo activa el flag `su`: `env.user` sigue
+        # siendo `browse(env.uid)`, así que con `uid=None` da un
+        # recordset vacío. Cualquier código -de este módulo o de
+        # dependencias estándar de Odoo/OCA, p.ej.
+        # ``mail.thread.message_post()`` al crear la factura
+        # simplificada- que llame a ``self.env.user`` explota con
+        # ``ValueError: Expected singleton: res.users()``.
+        # Para evitarlo de raíz, vinculamos el resto de la petición al
+        # "Usuario de Ventas" configurado en el token (obligatorio al
+        # crear el token), manteniendo el modo superusuario para no
+        # alterar el comportamiento de ACL/reglas de registro que ya
+        # asume el resto del controlador con sudo().
+        real_uid = token_rec.sale_user_id.id or SUPERUSER_ID
+        request.update_env(user=real_uid, su=True)
+        token_rec = token_rec.with_env(request.env)
+
         return token_rec, None
 
     @staticmethod
@@ -824,9 +844,22 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
 
     @staticmethod
     def _resolve_partner(payload, pos_config):
+        # OJO: esta ruta se publica con auth="none", por lo que
+        # ``request.env`` no lleva usuario asociado (``request.env.uid``
+        # es ``None`` y ``request.env.su`` es ``False``; ver
+        # ``ir_http._auth_method_none``). Si se devuelve un recordset que
+        # no esté forzado a ``sudo()``, el mero acceso a un campo
+        # (p.ej. ``partner.name``) puede disparar la comprobación de ACL
+        # a nivel de campo (``_has_field_access``), que termina llamando
+        # a ``self.env.user.has_groups(...)``. Como no hay usuario,
+        # ``env.user`` es un recordset vacío y ``has_groups`` explota con
+        # ``ValueError: Expected singleton: res.users()``.
+        # Por eso TODOS los caminos de resolución del partner deben
+        # devolver el recordset en modo sudo().
+        Partner = request.env["res.partner"].sudo()
         partner_id = payload.get("partner_id")
         if partner_id:
-            partner = request.env["res.partner"].sudo().browse(int(partner_id))
+            partner = Partner.browse(int(partner_id))
             if not partner.exists():
                 raise ValidationError(
                     request.env._("El partner_id %s no existe.", partner_id)
@@ -834,13 +867,13 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             return partner
         # Fallback 1: cliente por defecto del TPV (factura simplificada anónima).
         if "default_partner_id" in pos_config._fields and pos_config.default_partner_id:
-            return pos_config.default_partner_id
+            return pos_config.default_partner_id.sudo()
         # Fallback 2: consumidor final del módulo, para poder emitir la factura.
         consumer = request.env.ref(
             "matriz_almonte_pda_sale_import.partner_consumidor_final",
             raise_if_not_found=False,
         )
-        return consumer or request.env["res.partner"]
+        return consumer.sudo() if consumer else Partner
 
     @staticmethod
     def _resolve_product(line_payload):
