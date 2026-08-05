@@ -16,9 +16,7 @@
 
     <template id="product_label_report">
         <html>
-            <head>
-                <meta charset="utf-8" />
-            </head>
+            <head />
             <body>
                 <!-- Odoo 19 exige un elemento <main> en el HTML del reporte
                      (ir_actions_report._prepare_html busca //main); sin él
@@ -26,10 +24,15 @@
                      ADEMÁS: _prepare_html, al no existir ningún div.article,
                      hace un fallback que solo conserva los HIJOS de <main>
                      (descarta el resto, incluido el <head>). Por eso el
-                     <style> se define AQUÍ DENTRO (y no en <head>): si no,
-                     se pierde y todo el posicionamiento absoluto deja de
-                     aplicarse. -->
+                     <style> y el <meta charset> se definen AQUÍ DENTRO (y
+                     no en <head>): si no, se pierden. Sin <style>, todo el
+                     posicionamiento absoluto deja de aplicarse. Sin el
+                     <meta charset="utf-8">, caracteres especiales como "€"
+                     se muestran corruptos (por eso, además, el precio se
+                     imprime con la entidad HTML numérica del euro, ver
+                     ``_format_price`` en el parser Python). -->
                 <main>
+                    <meta charset="utf-8" />
                     <style type="text/css">
                         @page {
                             size: 50mm 29mm;
@@ -55,13 +58,17 @@
                             font-family: Arial, Helvetica, sans-serif;
                             color: #000000;
                         }
-                        /* 1. Nombre del producto: primera línea, arriba de todo */
+                        /* 1. Nombre del producto: primera línea, arriba de
+                           todo. "top" con un pequeño margen (en vez de
+                           pegado al borde) porque la Brother QL-700 tiene
+                           un margen automático de no-impresión al inicio
+                           de cada etiqueta. */
                         .label-name {
                             position: absolute;
-                            top: 0.6mm;
+                            top: 2mm;
                             left: 1mm;
                             right: 1mm;
-                            height: 6.6mm;
+                            height: 6mm;
                             font-size: 8.5pt;
                             font-weight: bold;
                             line-height: 1.15;
@@ -75,7 +82,7 @@
                         /* línea separadora sutil entre el nombre y el resto */
                         .label-divider {
                             position: absolute;
-                            top: 7.3mm;
+                            top: 8.3mm;
                             left: 7mm;
                             right: 7mm;
                             height: 0;
@@ -84,10 +91,10 @@
                         /* 2. Precio de venta con IVA incluido */
                         .label-price {
                             position: absolute;
-                            top: 7.7mm;
+                            top: 8.6mm;
                             left: 1mm;
                             right: 1mm;
-                            height: 5.8mm;
+                            height: 5.5mm;
                             font-size: 14.5pt;
                             font-weight: bold;
                             text-align: center;
@@ -97,10 +104,10 @@
                         /* 3. Código de barras */
                         .label-barcode {
                             position: absolute;
-                            top: 13.8mm;
+                            top: 14.4mm;
                             left: 2mm;
                             right: 2mm;
-                            height: 9.7mm;
+                            height: 9mm;
                             text-align: center;
                         }
                         .label-barcode img {
@@ -109,10 +116,10 @@
                         /* 4. Referencia del producto: debajo del código de barras */
                         .label-ref {
                             position: absolute;
-                            top: 23.8mm;
+                            top: 23.7mm;
                             left: 1mm;
                             right: 1mm;
-                            height: 4.6mm;
+                            height: 4.5mm;
                             font-size: 11pt;
                             font-weight: bold;
                             letter-spacing: 0.3mm;
@@ -128,7 +135,7 @@
                         >
                             <div class="label-name" t-esc="label['name']" />
                             <div class="label-divider" />
-                            <div class="label-price" t-esc="label['price']" />
+                            <div class="label-price" t-out="label['price']" />
                             <div class="label-barcode">
                                 <img
                                     t-if="label['barcode_image']"

@@ -3,8 +3,9 @@ import base64
 import logging
 from io import BytesIO
 
+from markupsafe import Markup
+
 from odoo import models
-from odoo.tools import format_amount
 
 _logger = logging.getLogger(__name__)
 
@@ -13,7 +14,7 @@ _logger = logging.getLogger(__name__)
 # report_paperformat.xml). 1mm equivale a estos "px CSS".
 _PX_PER_MM = 96.0 / 25.4
 # Altura física deseada del código de barras impreso en la etiqueta.
-_BARCODE_HEIGHT_MM = 9.7
+_BARCODE_HEIGHT_MM = 9.0
 
 
 class MatrizAlmonteProductLabelReport(models.AbstractModel):
@@ -36,6 +37,26 @@ class MatrizAlmonteProductLabelReport(models.AbstractModel):
             )
             price = res["total_included"]
         return price
+
+    def _format_price(self, amount):
+        """Formatea ``amount`` con 2 decimales y el símbolo "€" fijo.
+
+        Se usa un símbolo de moneda FIJO (en lugar de derivarlo de
+        ``product.currency_id`` con ``format_amount``, cuyo símbolo puede no
+        mostrarse según la moneda/idioma configurados) porque en la etiqueta
+        impresa siempre debe aparecer "€".
+
+        Se devuelve como ``Markup`` con la entidad HTML numérica del euro
+        (``&#8364;``) en lugar del carácter Unicode literal: el documento
+        HTML final que procesa wkhtmltopdf pierde la declaración de charset
+        UTF-8 (ver comentario junto al <meta charset> de la plantilla), lo
+        que hacía que el carácter "€" se mostrase corrupto (p.ej. "‚"). La
+        entidad numérica se interpreta correctamente pase lo que pase con
+        la codificación del documento. Al ir envuelta en ``Markup`` y
+        pintarse con ``t-out`` en la plantilla, QWeb no la escapa.
+        """
+        formatted = f"{amount:.2f}".replace(".", ",")
+        return Markup("%s &#8364;") % formatted
 
     def _get_barcode_image(self, value):
         """Datos de la imagen del código de barras Code128 de ``value``.
@@ -103,7 +124,7 @@ class MatrizAlmonteProductLabelReport(models.AbstractModel):
             "product": product,
             "default_code": product.default_code or "",
             "name": product.name,
-            "price": format_amount(self.env, price_with_tax, product.currency_id),
+            "price": self._format_price(price_with_tax),
             "barcode_image": self._get_barcode_image(product.default_code),
         }
 

@@ -1,6 +1,8 @@
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0)
 """Tests del módulo matriz_almonte_product_label."""
 
+from markupsafe import Markup
+
 from odoo.exceptions import UserError, ValidationError
 from odoo.tests.common import TransactionCase, tagged
 
@@ -46,6 +48,23 @@ class TestProductLabelBrotherQl700(TransactionCase):
     def test_price_without_tax(self):
         price = self.report_model._get_price_with_tax(self.product_no_tax)
         self.assertAlmostEqual(price, 5.0, places=2)
+
+    def test_format_price_fixed_euro_symbol(self):
+        """El símbolo de moneda debe ser SIEMPRE "€", fijo, sin depender de
+        ``product.currency_id`` (que podría no mostrar el símbolo).
+
+        Se comprueba la entidad HTML numérica del euro (``&#8364;``), no
+        el carácter Unicode literal: el documento HTML final pierde la
+        declaración de charset UTF-8 (ver comentario en la plantilla QWeb),
+        lo que corrompía el carácter "€" directo. Además debe ser
+        ``Markup`` (HTML seguro) para que QWeb no escape el "&" de la
+        entidad al pintarlo con ``t-out``.
+        """
+        price = self.report_model._format_price(12.1)
+        self.assertIsInstance(price, Markup)
+        self.assertEqual(price, "12,10 &#8364;")
+        self.assertEqual(self.report_model._format_price(5), "5,00 &#8364;")
+        self.assertEqual(self.report_model._format_price(1234.5), "1234,50 &#8364;")
 
     def test_barcode_image(self):
         image = self.report_model._get_barcode_image(self.product.default_code)
@@ -98,7 +117,7 @@ class TestProductLabelBrotherQl700(TransactionCase):
         self.assertEqual(len(values["labels"]), 3)
         for label in values["labels"]:
             self.assertEqual(label["default_code"], "TESTLABEL001")
-            self.assertIn("12", label["price"])
+            self.assertEqual(label["price"], "12,10 &#8364;")
 
     def test_wizard_process_report_action(self):
         wizard = self.env["matriz_almonte_product_label_wizard"].create(
