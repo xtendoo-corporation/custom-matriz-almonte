@@ -50,7 +50,9 @@ class TestProductLabelBrotherQl700(TransactionCase):
     def test_barcode_image(self):
         image = self.report_model._get_barcode_image(self.product.default_code)
         self.assertTrue(image)
-        self.assertTrue(image.startswith("data:image/png;base64,"))
+        self.assertTrue(image["src"].startswith("data:image/png;base64,"))
+        self.assertGreater(image["width"], 0)
+        self.assertGreater(image["height"], 0)
 
     def test_barcode_image_without_reference(self):
         self.assertFalse(self.report_model._get_barcode_image(False))
@@ -140,6 +142,45 @@ class TestProductLabelBrotherQl700(TransactionCase):
             content if isinstance(content, str) else content.decode("utf-8")
         )
         self.assertEqual(content_str.count(self.product.default_code), 3)
+
+    def test_style_is_inside_main(self):
+        """Test de regresión CRÍTICO: el <style> debe estar DENTRO de <main>.
+
+        ``ir_actions_report._prepare_html`` (Odoo 19), al no existir ningún
+        ``div.article`` en la plantilla, aplica un fallback que SOLO
+        conserva los hijos de <main> al reinsertar el contenido dentro del
+        layout final (``web.minimal_layout``): todo lo que esté fuera de
+        <main> (p.ej. un <style> en <head>) se descarta SILENCIOSAMENTE.
+
+        Si esto ocurre, el CSS deja de aplicarse por completo y todo el
+        posicionamiento absoluto de la etiqueta se rompe: el contenido cae
+        en flujo normal y el nombre/precio/código de barras/referencia
+        aparecen desplazados y amontonados en la parte superior de la
+        etiqueta (bug detectado y corregido manualmente, verificado
+        renderizando el PDF real y rasterizándolo).
+        """
+        values = self.report_model._get_report_values(
+            self.product.ids,
+            {"custom_quantity": 1, "product_ids": self.product.ids},
+        )
+        html = self.env["ir.qweb"]._render(
+            "matriz_almonte_product_label.product_label_report", values
+        )
+        html = str(html)
+        main_start = html.index("<main")
+        main_end = html.index("</main>")
+        style_start = html.index("<style")
+        self.assertGreater(
+            style_start,
+            main_start,
+            "El <style> debe estar DENTRO de <main>, si no Odoo lo descarta"
+            " al reconstruir el documento final y se pierde todo el CSS.",
+        )
+        self.assertLess(
+            style_start,
+            main_end,
+            "El <style> debe estar DENTRO de <main> (antes de </main>).",
+        )
 
 
 

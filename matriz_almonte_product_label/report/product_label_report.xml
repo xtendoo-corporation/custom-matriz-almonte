@@ -17,94 +17,127 @@
     <template id="product_label_report">
         <html>
             <head>
-                <style type="text/css">
-                    @page {
-                        size: 50mm 29mm;
-                        margin: 0;
-                    }
-                    * {
-                        box-sizing: border-box;
-                    }
-                    html, body {
-                        margin: 0;
-                        padding: 0;
-                    }
-                    /* Posicionamiento absoluto (en lugar de flexbox) por
-                       compatibilidad con el motor WebKit de wkhtmltopdf, que
-                       gestiona mal flexbox combinado con saltos de página en
-                       páginas de tamaño tan reducido (50 x 29 mm). */
-                    .label {
-                        position: relative;
-                        width: 50mm;
-                        height: 29mm;
-                        overflow: hidden;
-                        font-family: Arial, Helvetica, sans-serif;
-                        color: #000000;
-                    }
-                    .label-ref {
-                        position: absolute;
-                        top: 1mm;
-                        left: 1.5mm;
-                        max-width: 27mm;
-                        font-size: 7pt;
-                        font-weight: bold;
-                        overflow: hidden;
-                        white-space: nowrap;
-                        text-overflow: ellipsis;
-                    }
-                    .label-price {
-                        position: absolute;
-                        top: 0.8mm;
-                        right: 1.5mm;
-                        font-size: 12pt;
-                        font-weight: bold;
-                        white-space: nowrap;
-                    }
-                    .label-name {
-                        position: absolute;
-                        top: 6.5mm;
-                        left: 1.5mm;
-                        right: 1.5mm;
-                        height: 7.5mm;
-                        font-size: 7pt;
-                        line-height: 1.05;
-                        overflow: hidden;
-                        text-align: center;
-                    }
-                    .label-barcode {
-                        position: absolute;
-                        bottom: 1mm;
-                        left: 1.5mm;
-                        right: 1.5mm;
-                        height: 10mm;
-                        text-align: center;
-                        line-height: 0;
-                    }
-                    .label-barcode img {
-                        height: 10mm;
-                        max-width: 100%;
-                    }
-                </style>
+                <meta charset="utf-8" />
             </head>
             <body>
                 <!-- Odoo 19 exige un elemento <main> en el HTML del reporte
                      (ir_actions_report._prepare_html busca //main); sin él
-                     falla con IndexError: list index out of range. -->
+                     falla con IndexError: list index out of range.
+                     ADEMÁS: _prepare_html, al no existir ningún div.article,
+                     hace un fallback que solo conserva los HIJOS de <main>
+                     (descarta el resto, incluido el <head>). Por eso el
+                     <style> se define AQUÍ DENTRO (y no en <head>): si no,
+                     se pierde y todo el posicionamiento absoluto deja de
+                     aplicarse. -->
                 <main>
+                    <style type="text/css">
+                        @page {
+                            size: 50mm 29mm;
+                            margin: 0;
+                        }
+                        * {
+                            box-sizing: border-box;
+                        }
+                        html, body {
+                            margin: 0;
+                            padding: 0;
+                        }
+                        /* Posicionamiento absoluto (en lugar de flexbox) por
+                           compatibilidad con el motor WebKit de wkhtmltopdf,
+                           que gestiona mal flexbox combinado con saltos de
+                           página en páginas de tamaño tan reducido
+                           (50 x 29 mm). */
+                        .label {
+                            position: relative;
+                            width: 50mm;
+                            height: 29mm;
+                            overflow: hidden;
+                            font-family: Arial, Helvetica, sans-serif;
+                            color: #000000;
+                        }
+                        /* 1. Nombre del producto: primera línea, arriba de todo */
+                        .label-name {
+                            position: absolute;
+                            top: 0.6mm;
+                            left: 1mm;
+                            right: 1mm;
+                            height: 6.6mm;
+                            font-size: 8.5pt;
+                            font-weight: bold;
+                            line-height: 1.15;
+                            text-align: center;
+                            overflow: hidden;
+                            display: -webkit-box;
+                            -webkit-box-orient: vertical;
+                            -webkit-line-clamp: 2;
+                            text-overflow: ellipsis;
+                        }
+                        /* línea separadora sutil entre el nombre y el resto */
+                        .label-divider {
+                            position: absolute;
+                            top: 7.3mm;
+                            left: 7mm;
+                            right: 7mm;
+                            height: 0;
+                            border-top: 0.4pt solid #444444;
+                        }
+                        /* 2. Precio de venta con IVA incluido */
+                        .label-price {
+                            position: absolute;
+                            top: 7.7mm;
+                            left: 1mm;
+                            right: 1mm;
+                            height: 5.8mm;
+                            font-size: 14.5pt;
+                            font-weight: bold;
+                            text-align: center;
+                            white-space: nowrap;
+                            overflow: hidden;
+                        }
+                        /* 3. Código de barras */
+                        .label-barcode {
+                            position: absolute;
+                            top: 13.8mm;
+                            left: 2mm;
+                            right: 2mm;
+                            height: 9.7mm;
+                            text-align: center;
+                        }
+                        .label-barcode img {
+                            display: inline-block;
+                        }
+                        /* 4. Referencia del producto: debajo del código de barras */
+                        .label-ref {
+                            position: absolute;
+                            top: 23.8mm;
+                            left: 1mm;
+                            right: 1mm;
+                            height: 4.6mm;
+                            font-size: 11pt;
+                            font-weight: bold;
+                            letter-spacing: 0.3mm;
+                            text-align: center;
+                            white-space: nowrap;
+                            overflow: hidden;
+                        }
+                    </style>
                     <t t-foreach="labels" t-as="label">
                         <div
                             class="label"
                             t-attf-style="#{'' if label_first else 'page-break-before: always;'}"
                         >
-                            <span class="label-ref" t-esc="label['default_code']" />
-                            <span class="label-price" t-esc="label['price']" />
                             <div class="label-name" t-esc="label['name']" />
+                            <div class="label-divider" />
+                            <div class="label-price" t-esc="label['price']" />
                             <div class="label-barcode">
                                 <img
                                     t-if="label['barcode_image']"
-                                    t-att-src="label['barcode_image']"
+                                    t-att-src="label['barcode_image']['src']"
+                                    t-att-width="label['barcode_image']['width']"
+                                    t-att-height="label['barcode_image']['height']"
                                 />
                             </div>
+                            <div class="label-ref" t-esc="label['default_code']" />
                         </div>
                     </t>
                 </main>

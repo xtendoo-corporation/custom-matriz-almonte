@@ -20,7 +20,13 @@
         <field name="header_line" eval="False" />
         <field name="header_spacing">0</field>
         <field name="disable_shrinking" eval="True" />
-        <field name="dpi">300</field>
+        <!-- OJO: con dpi alto, wkhtmltopdf activa un zoom de compensación
+             (ratio 96/dpi) que descuadra el posicionamiento absoluto en
+             mm del contenido. Se deja el dpi estándar (96) que no
+             requiere zoom de compensación; la resolución de impresión
+             real la determina el driver de la Brother QL-700, no este
+             valor. -->
+        <field name="dpi">96</field>
     </record>
 
 </odoo>
