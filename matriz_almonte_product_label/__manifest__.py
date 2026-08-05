@@ -11,7 +11,7 @@
     "author": "Xtendoo",
     "website": "https://www.xtendoo.es",
     "license": "LGPL-3",
-    "depends": ["product", "account", "web"],
+    "depends": ["product", "account"],
     "data": [
         "security/ir.model.access.csv",
         "report/report_paperformat.xml",
