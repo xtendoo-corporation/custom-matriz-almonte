@@ -787,6 +787,21 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         )
         order = order_model.create(order_dict)
 
+        # `amount_total`/`amount_tax` en `order_dict` son una suma manual
+        # línea a línea calculada en este controlador (vía
+        # ``_prepare_order_line_vals``). Esa suma puede no coincidir con
+        # el total oficial que calcula Odoo en ``_compute_prices()``
+        # (que usa ``AccountTax._get_tax_totals_summary`` y respeta el
+        # método de redondeo configurado en la compañía: por línea o
+        # global, más el posible "cash rounding" del TPV). Si no
+        # recalculamos AQUÍ, antes de resolver el importe del pago
+        # automático, ``_resolve_auto_payment_amount`` usaría un
+        # ``amount_total`` desactualizado y el pago generado podría
+        # quedarse corto frente al total real, hacienda fallar después
+        # la validación "los pagos deben cubrir el total" aunque se
+        # pretendía pagar el 100 %.
+        order._compute_prices()
+
         mark_as_paid = self._coerce_bool(payload.get("mark_as_paid"), default=True)
         payments = list(payload.get("payments", []))
         if mark_as_paid and not payments:
@@ -817,6 +832,8 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                     "uuid": str(payment.get("uuid") or uuid4()),
                 }
             )
+        # Recalcula amount_paid/amount_return (y confirma amount_total)
+        # ahora que los pagos ya están creados.
         order._compute_prices()
 
         if mark_as_paid:

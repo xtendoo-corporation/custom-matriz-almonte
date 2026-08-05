@@ -1214,4 +1214,76 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
             "El pedido debe revertirse por completo cuando falla la finalización.",
         )
 
+    def test_47_create_pos_order_auto_payment_covers_cash_rounding_total(self):
+        """El pago automático debe cubrir el total ya con "cash rounding".
+
+        Reproduce un bug real de producción: el controlador calcula el
+        total manualmente línea a línea (``_prepare_order_line_vals``)
+        para poblar ``order_dict`` y, con eso, decidía el importe del
+        pago automático ANTES de que ``order._compute_prices()``
+        recalculase el total oficial (que si el TPV tiene activado el
+        redondeo de efectivo -"cash rounding"- puede diferir unos
+        céntimos del cálculo manual). El pago autogenerado se quedaba
+        corto y el pedido no podía cerrarse como pagado ("los pagos
+        deben cubrir el total"), aunque se pedía pagar el 100 %.
+        """
+        self._ensure_open_session()
+
+        no_tax_product = self.env["product.product"].create(
+            {
+                "name": "Producto sin impuestos (cash rounding test)",
+                "type": "consu",
+                "sale_ok": True,
+                "taxes_id": [(6, 0, [])],
+            }
+        )
+        expense_account = self.env["account.account"].search(
+            [("account_type", "=", "expense")], limit=1
+        )
+        rounding = self.env["account.cash.rounding"].create(
+            {
+                "name": "Redondeo 0.05 (test)",
+                "rounding": 0.05,
+                "strategy": "add_invoice_line",
+                "rounding_method": "HALF-UP",
+                "profit_account_id": expense_account.id,
+                "loss_account_id": expense_account.id,
+            }
+        )
+        self.tienda.write(
+            {
+                "cash_rounding": True,
+                "only_round_cash_method": False,
+                "rounding_method": rounding.id,
+            }
+        )
+
+        # 10.03 no cae en un múltiplo de 0.05: el cálculo manual del
+        # controlador daría 10.03, pero el total oficial (con cash
+        # rounding HALF-UP a 0.05) debe ser 10.05.
+        payload, status = self._call_pos_order_endpoint(
+            payload={
+                "external_reference": "PDA-POS-CASH-ROUNDING-001",
+                "lineas": [
+                    {
+                        "product_id": no_tax_product.id,
+                        "qty": 1,
+                        "price_unit": 10.03,
+                    }
+                ],
+            },
+            headers={"Authorization": f"Bearer {self.token.token}"},
+        )
+
+        self.assertEqual(status, 200, payload)
+        self.assertTrue(payload["success"], payload)
+
+        order = self.env["pos.order"].browse(payload["order_id"])
+        # "paid" o "done" (tras invoicing) según el flujo estándar de POS;
+        # lo relevante es que NO se quedó en "draft" por falta de cobro.
+        self.assertIn(order.state, ("paid", "done", "invoiced"))
+        self.assertTrue(order.account_move)
+        self.assertAlmostEqual(order.amount_total, 10.05, places=2)
+        self.assertAlmostEqual(order.amount_paid, order.amount_total, places=2)
+
 
