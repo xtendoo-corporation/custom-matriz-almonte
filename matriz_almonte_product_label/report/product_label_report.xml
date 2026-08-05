@@ -29,75 +29,85 @@
                         margin: 0;
                         padding: 0;
                     }
+                    /* Posicionamiento absoluto (en lugar de flexbox) por
+                       compatibilidad con el motor WebKit de wkhtmltopdf, que
+                       gestiona mal flexbox combinado con saltos de página en
+                       páginas de tamaño tan reducido (50 x 29 mm). */
                     .label {
+                        position: relative;
                         width: 50mm;
                         height: 29mm;
-                        padding: 1mm 1.5mm;
                         overflow: hidden;
                         font-family: Arial, Helvetica, sans-serif;
                         color: #000000;
-                        page-break-after: always;
-                        page-break-inside: avoid;
-                        display: flex;
-                        flex-direction: column;
-                        justify-content: space-between;
-                    }
-                    .label-header {
-                        display: flex;
-                        flex-direction: row;
-                        justify-content: space-between;
-                        align-items: flex-start;
-                        width: 100%;
                     }
                     .label-ref {
+                        position: absolute;
+                        top: 1mm;
+                        left: 1.5mm;
+                        max-width: 27mm;
                         font-size: 7pt;
                         font-weight: bold;
-                        max-width: 58%;
                         overflow: hidden;
                         white-space: nowrap;
                         text-overflow: ellipsis;
                     }
                     .label-price {
+                        position: absolute;
+                        top: 0.8mm;
+                        right: 1.5mm;
                         font-size: 12pt;
                         font-weight: bold;
                         white-space: nowrap;
                     }
                     .label-name {
+                        position: absolute;
+                        top: 6.5mm;
+                        left: 1.5mm;
+                        right: 1.5mm;
+                        height: 7.5mm;
                         font-size: 7pt;
                         line-height: 1.05;
-                        max-height: 7.4mm;
                         overflow: hidden;
                         text-align: center;
-                        width: 100%;
                     }
                     .label-barcode {
-                        width: 100%;
+                        position: absolute;
+                        bottom: 1mm;
+                        left: 1.5mm;
+                        right: 1.5mm;
+                        height: 10mm;
                         text-align: center;
-                        height: 9mm;
                         line-height: 0;
                     }
                     .label-barcode img {
-                        height: 9mm;
+                        height: 10mm;
                         max-width: 100%;
                     }
                 </style>
             </head>
             <body>
-                <t t-foreach="labels" t-as="label">
-                    <div class="label">
-                        <div class="label-header">
+                <!-- Odoo 19 exige un elemento <main> en el HTML del reporte
+                     (ir_actions_report._prepare_html busca //main); sin él
+                     falla con IndexError: list index out of range. -->
+                <main>
+                    <t t-foreach="labels" t-as="label">
+                        <div
+                            class="label"
+                            t-attf-style="#{'' if label_first else 'page-break-before: always;'}"
+                        >
                             <span class="label-ref" t-esc="label['default_code']" />
                             <span class="label-price" t-esc="label['price']" />
+                            <div class="label-name" t-esc="label['name']" />
+                            <div class="label-barcode">
+                                <img
+                                    t-if="label['barcode_image']"
+                                    t-att-src="label['barcode_image']"
+                                />
+                            </div>
                         </div>
-                        <div class="label-name" t-esc="label['name']" />
-                        <div class="label-barcode">
-                            <img
-                                t-if="label['barcode_image']"
-                                t-att-src="label['barcode_image']"
-                            />
-                        </div>
-                    </div>
-                </t>
+                    </t>
+                </main>
             </body>
         </html>
     </template>

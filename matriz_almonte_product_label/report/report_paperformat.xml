@@ -8,7 +8,11 @@
         <field name="format">custom</field>
         <field name="page_height">29</field>
         <field name="page_width">50</field>
-        <field name="orientation">Landscape</field>
+        <!-- OJO: wkhtmltopdf intercambia width/height cuando orientation=Landscape
+             (lo usa para rotar tamaños estándar tipo A4). Como aquí ya definimos
+             manualmente el ancho (50) mayor que el alto (29), hay que dejar
+             'Portrait' para que NO se invietan y el resultado sea 50x29 real. -->
+        <field name="orientation">Portrait</field>
         <field name="margin_top">0</field>
         <field name="margin_bottom">0</field>
         <field name="margin_left">0</field>

@@ -112,6 +112,35 @@ class TestProductLabelBrotherQl700(TransactionCase):
             "matriz_almonte_product_label.product_label_report",
         )
 
+    def test_render_qweb_pdf(self):
+        """Test de regresión: el informe debe renderizarse sin errores.
+
+        Cubre dos bugs detectados manualmente:
+        - IndexError ("//main" no encontrado) si la plantilla no envuelve
+          el contenido en un <main> (falla en ``_prepare_html``, antes de
+          invocar wkhtmltopdf, así que se detecta también en modo test).
+        - Páginas duplicadas/vacías si el layout usa flexbox en lugar de
+          posicionamiento absoluto (bug de wkhtmltopdf con páginas tan
+          pequeñas; verificado manualmente generando el PDF real, ya que
+          en los tests Odoo sustituye wkhtmltopdf por HTML para no
+          ralentizar la suite).
+        """
+        report = self.env.ref(
+            "matriz_almonte_product_label.action_report_product_label_brother_ql700"
+        )
+        data = {"custom_quantity": 3, "product_ids": self.product.ids}
+        content, report_type = report._render_qweb_pdf(
+            "matriz_almonte_product_label.product_label_report",
+            self.product.ids,
+            data=data,
+        )
+        self.assertIn(report_type, ("pdf", "html"))
+        self.assertTrue(content)
+        content_str = (
+            content if isinstance(content, str) else content.decode("utf-8")
+        )
+        self.assertEqual(content_str.count(self.product.default_code), 3)
+
 
 
 
