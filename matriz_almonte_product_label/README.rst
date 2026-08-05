@@ -1,6 +1,6 @@
-==================================================
+=====================================================
 Matriz Almonte - Etiquetas de producto Brother QL-700
-==================================================
+=====================================================
 
 Este módulo permite imprimir etiquetas de producto con el tamaño exacto
 soportado por la impresora de etiquetas **Brother QL-700**: 5 cm de ancho
