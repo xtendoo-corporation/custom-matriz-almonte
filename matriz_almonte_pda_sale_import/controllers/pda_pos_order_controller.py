@@ -312,6 +312,8 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         _logger.info(f"   - to_invoice: {payload.get('to_invoice')}")
         _logger.info(f"   - mark_as_paid: {payload.get('mark_as_paid')}")
         _logger.info(f"   - amount_paid: {payload.get('amount_paid')}")
+        _logger.info(f"   - fpago : {payload.get('fpago')}")
+        _logger.info(f"   - payment_type: {payload.get('payment_type')}")
         _logger.info(f"   - is_printer: {self._is_print_requested(payload)}")
 
         lineas = payload.get("lineas") if "lineas" in payload else payload.get("lines")
@@ -436,6 +438,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             return _error("VALIDATION_ERROR", str(exc), http_status=400)
 
         print_requested = self._is_print_requested(payload)
+        payment = order.payment_ids[:1]
         response_payload = {
             "success": True,
             "code": "CREATED",
@@ -448,6 +451,8 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             "session_state": order.session_id.state,
             "amount_total": order.amount_total,
             "amount_paid": order.amount_paid,
+            "payment_method_id": payment.payment_method_id.id if payment else False,
+            "payment_method_name": payment.payment_method_id.name if payment else False,
             "state": order.state,
             "invoice_id": order.account_move.id if order.account_move else False,
             "invoice_name": order.account_move.name if order.account_move else False,
@@ -548,6 +553,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 "amount_paid",
                 "payment_method_id",
                 "fpago",
+                "payment_type",
                 "is_printer",
                 "imprimir",
                 "payments",
@@ -1319,9 +1325,16 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
 
     @staticmethod
     def _resolve_payload_payment_method(payload, open_session):
+        # Orden de preferencia para determinar el método de pago del
+        # cobro automático:
+        #   1. ``payment_method_id`` explícito (id numérico de Odoo).
+        #   2. ``fpago`` que envía la PDA: "00" = efectivo, "TR" = tarjeta.
+        #   3. ``payment_type`` que envía la PDA: "cash" o "card".
         selector = payload.get("payment_method_id")
         if selector in (None, ""):
             selector = payload.get("fpago")
+        if selector in (None, ""):
+            selector = payload.get("payment_type")
         if selector in (None, ""):
             return False
         return MatrizAlmontePdaPosOrderController._resolve_payment_selector(
@@ -1352,18 +1365,20 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             )
 
         normalized = str(selector).strip().lower()
-        if normalized.isdigit():
+        if normalized.isdigit() and int(normalized) > 0:
             method_by_id = payment_methods.filtered(lambda m: m.id == int(normalized))
             if method_by_id:
                 return method_by_id[0]
 
-        if normalized in {"1", "01", "cash", "efectivo"}:
+        # Efectivo: "00"/"0"/"01"/"1" (códigos PDA) o "cash"/"efectivo".
+        if normalized in {"00", "0", "01", "1", "cash", "efectivo"}:
             cash_method = MatrizAlmontePdaPosOrderController._default_payment_method(
                 open_session
             )
             return cash_method
 
-        if normalized in {"2", "02", "card", "tarjeta"}:
+        # Tarjeta: "tr"/"02"/"2" (códigos PDA) o "card"/"tarjeta".
+        if normalized in {"tr", "02", "2", "card", "tarjeta"}:
             if "is_cash_count" in payment_methods._fields:
                 non_cash_methods = payment_methods.filtered(lambda m: not m.is_cash_count)
                 if non_cash_methods:
