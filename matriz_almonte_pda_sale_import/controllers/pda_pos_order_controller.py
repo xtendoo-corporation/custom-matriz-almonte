@@ -685,6 +685,12 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         _logger.info("🔄 [PDA ORDER] Resolviendo datos del pedido...")
 
         partner = self._resolve_partner(payload, pos_config)
+        pricelist = self._resolve_pricelist(
+            payload=payload,
+            partner=partner,
+            pos_config=pos_config,
+            company=open_session.company_id,
+        )
         date_order = payload.get("date_order") or fields.Datetime.now()
         to_invoice = self._coerce_bool(payload.get("to_invoice"), default=True)
         lines_payload = (
@@ -749,7 +755,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             "date_order": date_order,
             "to_invoice": to_invoice,
             "internal_note": f"PDA external_reference: {external_ref}",
-            "pricelist_id": pos_config.pricelist_id.id,
+            "pricelist_id": pricelist.id if pricelist else False,
             "fiscal_position_id": partner.property_account_position_id.id
             if partner
             else False,
@@ -858,6 +864,57 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             order.matriz_almonte_generate_picking_and_invoice()
 
         return order
+
+    @staticmethod
+    def _resolve_pricelist(payload, partner, pos_config, company):
+        """Determina la tarifa de precios del pedido POS.
+
+        ``pos.order`` exige una tarifa de precios (``pricelist_id``). En
+        algunos TPV ``pos_config.pricelist_id`` puede estar vacío (por
+        ejemplo si el TPV no usa tarifas), lo que provocaba el error
+        "El pedido «/» debe tener una tarifa de precios.". Para evitarlo
+        se resuelve una tarifa por orden de preferencia:
+        1. ``pricelist_id`` recibido explícitamente en el payload.
+        2. Tarifa configurada en el TPV.
+        3. Tarifa del cliente (``property_product_pricelist``).
+        4. Cualquier tarifa de la compañía (o sin compañía) como último
+           recurso.
+        """
+        Pricelist = request.env["product.pricelist"].sudo()
+
+        payload_pricelist_id = payload.get("pricelist_id")
+        if payload_pricelist_id:
+            pricelist = Pricelist.browse(int(payload_pricelist_id))
+            if not pricelist.exists():
+                raise ValidationError(
+                    request.env._(
+                        "La tarifa de precios %s no existe.", payload_pricelist_id
+                    )
+                )
+            return pricelist
+
+        if pos_config.pricelist_id:
+            return pos_config.pricelist_id.sudo()
+
+        if partner and partner.property_product_pricelist:
+            return partner.property_product_pricelist.sudo()
+
+        fallback = Pricelist.search(
+            [
+                "|",
+                ("company_id", "=", company.id),
+                ("company_id", "=", False),
+            ],
+            limit=1,
+        )
+        if not fallback:
+            raise ValidationError(
+                request.env._(
+                    "No se ha podido determinar una tarifa de precios para el "
+                    "pedido. Configura una tarifa en el TPV o en el cliente."
+                )
+            )
+        return fallback
 
     @staticmethod
     def _resolve_partner(payload, pos_config):
