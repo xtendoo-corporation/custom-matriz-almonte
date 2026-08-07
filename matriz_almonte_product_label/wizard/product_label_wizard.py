@@ -17,6 +17,15 @@ class MatrizAlmonteProductLabelWizard(models.TransientModel):
         default=1,
         required=True,
     )
+    label_format = fields.Selection(
+        selection=[
+            ("standard", "Estándar (nombre, precio y código de barras)"),
+            ("plata", "Plata (solo referencia y precio)"),
+        ],
+        string="Formato de etiqueta",
+        default="standard",
+        required=True,
+    )
 
     @api.model
     def default_get(self, fields_list):
@@ -50,9 +59,16 @@ class MatrizAlmonteProductLabelWizard(models.TransientModel):
             "custom_quantity": self.custom_quantity,
             "product_ids": self.product_ids.ids,
         }
-        report = self.env.ref(
-            "matriz_almonte_product_label.action_report_product_label_brother_ql700"
-        )
+        if self.label_format == "plata":
+            report_xmlid = (
+                "matriz_almonte_product_label.action_report_product_label_plata"
+            )
+        else:
+            report_xmlid = (
+                "matriz_almonte_product_label."
+                "action_report_product_label_brother_ql700"
+            )
+        report = self.env.ref(report_xmlid)
         return report.report_action(self.product_ids.ids, data=data)
 
 

@@ -14,6 +14,7 @@
                         options="{'no_create': True}"
                     />
                     <field name="custom_quantity" />
+                    <field name="label_format" />
                 </group>
                 <footer>
                     <button

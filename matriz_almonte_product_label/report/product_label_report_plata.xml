@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0) -->
+<odoo>
+
+    <record id="action_report_product_label_plata" model="ir.actions.report">
+        <field name="name">Etiquetas de producto Plata (Brother QL-700)</field>
+        <field name="model">product.product</field>
+        <field name="report_type">qweb-pdf</field>
+        <field name="report_name">matriz_almonte_product_label.product_label_report_plata</field>
+        <field name="report_file">matriz_almonte_product_label.product_label_report_plata</field>
+        <field
+            name="print_report_name"
+            >'Etiquetas Plata - %s' % (object.display_name or '')</field>
+        <field name="paperformat_id" ref="paperformat_brother_ql700" />
+    </record>
+
+    <template id="product_label_report_plata">
+        <html>
+            <head />
+            <body>
+                <!-- Formato "Plata": mismo tamaño y comportamiento que la
+                     etiqueta estándar (50 x 29 mm, Brother QL-700), pero
+                     SOLO muestra la referencia y el precio (sin nombre ni
+                     código de barras). Ver los comentarios de la plantilla
+                     estándar (product_label_report.xml) para el detalle de
+                     por qué el <style> y el <meta charset> van dentro de
+                     <main>. -->
+                <main>
+                    <meta charset="utf-8" />
+                    <style type="text/css">
+                        @page {
+                            size: 50mm 29mm;
+                            margin: 0;
+                        }
+                        * {
+                            box-sizing: border-box;
+                        }
+                        html, body {
+                            margin: 0;
+                            padding: 0;
+                        }
+                        .label {
+                            position: relative;
+                            width: 50mm;
+                            height: 29mm;
+                            overflow: hidden;
+                            font-family: Arial, Helvetica, sans-serif;
+                            color: #000000;
+                        }
+                        /* Referencia y precio: textos pequeños y juntos,
+                           centrados en el medio de la etiqueta. Se usa un
+                           bloque centrado verticalmente (top 50% + translate)
+                           que agrupa ambas líneas una encima de la otra. */
+                        .label-center {
+                            position: absolute;
+                            top: 50%;
+                            left: 1mm;
+                            right: 1mm;
+                            transform: translateY(-50%);
+                            text-align: center;
+                        }
+                        .label-ref {
+                            font-size: 7pt;
+                            font-weight: bold;
+                            letter-spacing: 0.2mm;
+                            line-height: 1.1;
+                            white-space: nowrap;
+                            overflow: hidden;
+                        }
+                        .label-price {
+                            font-size: 8pt;
+                            font-weight: bold;
+                            line-height: 1.1;
+                            white-space: nowrap;
+                            overflow: hidden;
+                        }
+                    </style>
+                    <t t-foreach="labels" t-as="label">
+                        <div
+                            class="label"
+                            t-attf-style="#{'' if label_first else 'page-break-before: always;'}"
+                        >
+                            <div class="label-center">
+                                <div class="label-ref" t-esc="label['default_code']" />
+                                <div class="label-price" t-out="label['price']" />
+                            </div>
+                        </div>
+                    </t>
+                </main>
+            </body>
+        </html>
+    </template>
+
+</odoo>
+

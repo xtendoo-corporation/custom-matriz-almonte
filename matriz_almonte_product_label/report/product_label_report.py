@@ -145,3 +145,19 @@ class MatrizAlmonteProductLabelReport(models.AbstractModel):
         }
 
 
+class MatrizAlmonteProductLabelReportPlata(
+    models.AbstractModel
+):
+    """Parser del informe de etiquetas "Plata".
+
+    Reutiliza íntegramente la lógica del parser estándar (mismos datos de
+    producto: referencia, nombre, precio con IVA y código de barras). La
+    única diferencia está en la PLANTILLA asociada, que solo pinta la
+    referencia y el precio.
+    """
+
+    _name = "report.matriz_almonte_product_label.product_label_report_plata"
+    _inherit = "report.matriz_almonte_product_label.product_label_report"
+    _description = "Parser del informe de etiquetas de producto Plata"
+
+

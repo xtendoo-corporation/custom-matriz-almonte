@@ -16,6 +16,7 @@
         "security/ir.model.access.csv",
         "report/report_paperformat.xml",
         "report/product_label_report.xml",
+        "report/product_label_report_plata.xml",
         "wizard/product_label_wizard_views.xml",
         "views/product_template_views.xml",
         "views/product_product_views.xml",
