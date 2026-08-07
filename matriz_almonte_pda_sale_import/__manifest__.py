@@ -19,6 +19,7 @@
         "views/matriz_almonte_api_token_views.xml",
         "views/matriz_almonte_pda_sale_import_views.xml",
         "views/pos_order_views.xml",
+        "views/pos_config_settings_views.xml",
         "views/menuitems.xml",
     ],
     "installable": True,

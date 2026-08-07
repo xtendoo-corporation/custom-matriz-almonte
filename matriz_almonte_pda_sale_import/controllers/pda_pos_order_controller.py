@@ -3,6 +3,7 @@
 
 import json
 import logging
+import socket
 import unicodedata
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
@@ -12,7 +13,7 @@ import requests as http_requests
 from odoo import SUPERUSER_ID, fields, http
 from odoo.exceptions import UserError, ValidationError
 from odoo.http import request
-from odoo.tools import float_compare
+from odoo.tools import float_compare, float_is_zero
 
 from .pda_sale_import_controller import MatrizAlmontePdaSaleImportController
 
@@ -828,12 +829,28 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             ]
 
         _logger.info(f"💳 [PDA ORDER] Procesando {len(payments)} pago(s)...")
+        is_refund = (
+            float_compare(
+                order.amount_total,
+                0.0,
+                precision_rounding=order.currency_id.rounding,
+            )
+            < 0
+        )
+        if is_refund:
+            _logger.info(
+                "↩️  [PDA ORDER] Importe negativo detectado: se procesa como "
+                "DEVOLUCIÓN (total=%.2f).",
+                order.amount_total,
+            )
         for _idx, payment in enumerate(payments, start=1):
             payment_method = self._resolve_payment_method(payment, open_session)
             amount = float(payment.get("amount", 0.0) or 0.0)
-            if amount <= 0:
+            # En una venta el importe es positivo; en una devolución es
+            # negativo. Solo se rechaza el importe cero (no aporta nada).
+            if float_is_zero(amount, precision_rounding=order.currency_id.rounding):
                 raise ValidationError(
-                    request.env._("El importe del pago debe ser mayor que cero.")
+                    request.env._("El importe del pago no puede ser cero.")
                 )
             order.add_payment(
                 {
@@ -850,14 +867,15 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         order._compute_prices()
 
         if mark_as_paid:
-            if (
-                float_compare(
-                    order.amount_paid,
-                    order.amount_total,
-                    precision_rounding=order.currency_id.rounding,
-                )
-                < 0
-            ):
+            rounding = order.currency_id.rounding
+            balance = float_compare(
+                order.amount_paid, order.amount_total, precision_rounding=rounding
+            )
+            # Venta (total >= 0): los pagos deben cubrir el total (>=).
+            # Devolución (total < 0): el importe devuelto (negativo) debe
+            # cubrir el total negativo (<=).
+            covered = balance >= 0 if order.amount_total >= 0 else balance <= 0
+            if not covered:
                 raise ValidationError(
                     request.env._(
                         "Para cerrar el pedido como pagado, los pagos deben "
@@ -993,12 +1011,14 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
     def _prepare_order_line_vals(self, line_payload, partner, pos_config, company):
         product = self._resolve_product(line_payload)
         qty = float(line_payload.get("qty", line_payload.get("unidades")))
-        price_unit = float(
-            line_payload.get(
-                "price_unit", line_payload.get("precio", product.lst_price)
-            )
-            or 0.0
-        )
+        raw_price = line_payload.get("price_unit", line_payload.get("precio"))
+        price_unit = float(raw_price or 0.0)
+        # La PDA puede enviar ``price_unit`` a 0 (por ejemplo en las
+        # devoluciones): en ese caso se toma el precio de catálogo del
+        # producto para que el total de la línea (y por tanto el importe
+        # a devolver) sea correcto en vez de quedar a cero.
+        if not price_unit:
+            price_unit = float(product.lst_price or 0.0)
         discount = float(line_payload.get("discount", 0.0) or 0.0)
 
         taxes = product.taxes_id.filtered_domain(
@@ -1084,9 +1104,26 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         return cls._coerce_bool(payload.get("imprimir", False))
 
     def _dispatch_order_print(self, order, pos_config):
+        # 1) Impresión DIRECTA en la impresora térmica de 80 mm por red
+        #    (RAW/ESC-POS sobre TCP, puerto 9100 por defecto) cuando el
+        #    TPV tiene configurada la IP de la impresora.
+        printer = self._get_direct_printer_config(pos_config)
+        direct_error = None
+        if printer.get("host"):
+            result = self._print_ticket_via_socket(order, printer)
+            if result.get("printed"):
+                return result
+            # Si la impresión directa falla se intenta el bridge local
+            # (si existe) como plan B, conservando el error original.
+            direct_error = result.get("print_error")
+
+        # 2) Plan B: bridge local de impresión (compatibilidad anterior).
         bridge_config = self._get_print_bridge_config(pos_config)
         if bridge_config.get("error"):
-            return {"printed": False, "print_error": bridge_config["error"]}
+            return {
+                "printed": False,
+                "print_error": direct_error or bridge_config["error"],
+            }
 
         payload = {
             "printer": bridge_config["printer_name"],
@@ -1151,6 +1188,63 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         }
 
     @staticmethod
+    def _get_direct_printer_config(pos_config):
+        """Devuelve la configuración de la impresora térmica directa del TPV."""
+        pos_fields = pos_config._fields
+        host = (
+            (pos_config.pda_ticket_printer_host or "").strip()
+            if "pda_ticket_printer_host" in pos_fields
+            else ""
+        )
+        port = (
+            pos_config.pda_ticket_printer_port
+            if "pda_ticket_printer_port" in pos_fields
+            else 0
+        ) or 9100
+        return {"host": host, "port": int(port)}
+
+    def _print_ticket_via_socket(self, order, printer):
+        """Imprime el ticket enviando los bytes ESC/POS directamente por TCP.
+
+        Es el método de impresión directo para impresoras térmicas de
+        80 mm conectadas por red (RAW/JetDirect, normalmente puerto 9100).
+        """
+        host = printer["host"]
+        port = printer.get("port") or 9100
+        raw_bytes = self._build_ticket_bytes(order)
+        try:
+            with socket.create_connection((host, port), timeout=10) as sock:
+                sock.sendall(raw_bytes)
+        except OSError as exc:
+            _logger.warning(
+                "[PDA ORDER] Error imprimiendo directamente en %s:%s para "
+                "pedido %s: %s",
+                host,
+                port,
+                order.name,
+                exc,
+            )
+            return {
+                "printed": False,
+                "print_printer": f"{host}:{port}",
+                "print_error": (
+                    f"No se pudo imprimir directamente en {host}:{port}: {exc}"
+                ),
+            }
+
+        _logger.info(
+            "[PDA ORDER] Ticket impreso directamente en %s:%s para pedido %s",
+            host,
+            port,
+            order.name,
+        )
+        return {
+            "printed": True,
+            "print_printer": f"{host}:{port}",
+            "print_mode": "direct_tcp",
+        }
+
+    @staticmethod
     def _normalize_bridge_base_url(raw_url):
         if not raw_url:
             return ""
@@ -1212,22 +1306,37 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         normalized = unicodedata.normalize("NFKD", value or "")
         return normalized.encode("ascii", "replace").decode("ascii")
 
-    def _build_ticket_hex_bytes(self, order):
+    def _build_ticket_bytes(self, order):
+        """Construye el flujo de bytes ESC/POS del ticket (80 mm térmica).
+
+        Devuelve ``bytes`` listos para enviar tal cual a la impresora
+        (impresión directa por socket) o para convertir a hexadecimal
+        (bridge local).
+        """
+        width = 48  # 80 mm en Fuente A = 48 columnas.
         company_name = self._normalize_ticket_text(order.company_id.name or "")
         order_name = self._normalize_ticket_text(order.name or order.pos_reference or "")
         order_ref = self._normalize_ticket_text(order.pos_reference or "")
         date_order = (
             fields.Datetime.to_string(order.date_order) if order.date_order else ""
         )
-        separator = "-" * 42
+        separator = "-" * width
+        is_refund = order.amount_total < 0
 
         lines = [
-            "\x1b@\x1ba\x01",
+            "\x1b@\x1ba\x01",  # init + centrado
             company_name,
-            "\x1ba\x00",
-            separator,
-            f"Pedido: {order_name}",
         ]
+        if is_refund:
+            # Texto en negrita para resaltar que es una devolución.
+            lines.append("\x1bE\x01DEVOLUCION\x1bE\x00")
+        lines.extend(
+            [
+                "\x1ba\x00",  # alineado a la izquierda
+                separator,
+                f"Pedido: {order_name}",
+            ]
+        )
         if order.account_move:
             lines.append(
                 f"Factura simpl.: "
@@ -1243,6 +1352,8 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             )
         lines.append(separator)
 
+        amount_col = 12
+        detail_col = width - amount_col
         for line in order.lines:
             product_name = self._normalize_ticket_text(
                 line.full_product_name or line.product_id.display_name or line.name or ""
@@ -1250,18 +1361,25 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             qty_text = f"{line.qty:g}"
             total_text = f"{line.price_subtotal_incl:.2f}"
             detail_text = f"{qty_text} x {line.price_unit:.2f}"
-            lines.append(product_name[:42])
-            lines.append(f"{detail_text[:30]:<30}{total_text:>12}")
+            lines.append(product_name[:width])
+            lines.append(f"{detail_text[:detail_col]:<{detail_col}}{total_text:>{amount_col}}")
 
-        lines.extend([separator, f"{'TOTAL':<30}{order.amount_total:>12.2f}"])
+        lines.extend(
+            [separator, f"{'TOTAL':<{detail_col}}{order.amount_total:>{amount_col}.2f}"]
+        )
 
         for payment in order.payment_ids:
             payment_name = self._normalize_ticket_text(payment.payment_method_id.name or "")
-            lines.append(f"{payment_name[:30]:<30}{payment.amount:>12.2f}")
+            lines.append(
+                f"{payment_name[:detail_col]:<{detail_col}}{payment.amount:>{amount_col}.2f}"
+            )
 
-        lines.extend(["", "", "\x1dV\x00"])
-        ticket_bytes = "\n".join(lines).encode("cp850", errors="replace")
-        return ",".join(f"{byte:02X}" for byte in ticket_bytes)
+        lines.extend(["", "", "\x1dV\x00"])  # avance de papel + corte
+        return "\n".join(lines).encode("cp850", errors="replace")
+
+    def _build_ticket_hex_bytes(self, order):
+        """Versión hexadecimal del ticket para el bridge local (``/print-raw``)."""
+        return ",".join(f"{byte:02X}" for byte in self._build_ticket_bytes(order))
 
     @staticmethod
     def _resolve_payment_method(payment_payload, open_session):
