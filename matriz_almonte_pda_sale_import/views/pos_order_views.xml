@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0) -->
+<odoo>
+
+    <!-- Formulario: mostrar la referencia externa de la PDA -->
+    <record id="view_pos_order_form_pda_reference" model="ir.ui.view">
+        <field name="name">pos.order.form.pda.reference</field>
+        <field name="model">pos.order</field>
+        <field name="inherit_id" ref="point_of_sale.view_pos_pos_form" />
+        <field name="arch" type="xml">
+            <field name="pos_reference" position="after">
+                <field name="pda_external_reference" readonly="1" />
+            </field>
+        </field>
+    </record>
+
+    <!-- Lista: columna opcional con la referencia externa de la PDA -->
+    <record id="view_pos_order_tree_pda_reference" model="ir.ui.view">
+        <field name="name">pos.order.list.pda.reference</field>
+        <field name="model">pos.order</field>
+        <field name="inherit_id" ref="point_of_sale.view_pos_order_tree" />
+        <field name="arch" type="xml">
+            <field name="pos_reference" position="after">
+                <field
+                    name="pda_external_reference"
+                    optional="hide"
+                    string="Ref. PDA"
+                />
+            </field>
+        </field>
+    </record>
+
+    <!-- Búsqueda: permitir filtrar por la referencia externa de la PDA -->
+    <record id="view_pos_order_search_pda_reference" model="ir.ui.view">
+        <field name="name">pos.order.search.pda.reference</field>
+        <field name="model">pos.order</field>
+        <field name="inherit_id" ref="point_of_sale.view_pos_order_filter" />
+        <field name="arch" type="xml">
+            <field name="pos_reference" position="after">
+                <field name="pda_external_reference" string="Referencia PDA" />
+            </field>
+        </field>
+    </record>
+
+</odoo>
+

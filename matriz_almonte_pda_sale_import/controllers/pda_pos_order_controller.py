@@ -755,6 +755,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             "date_order": date_order,
             "to_invoice": to_invoice,
             "internal_note": f"PDA external_reference: {external_ref}",
+            "pda_external_reference": external_ref or False,
             "pricelist_id": pricelist.id if pricelist else False,
             "fiscal_position_id": partner.property_account_position_id.id
             if partner

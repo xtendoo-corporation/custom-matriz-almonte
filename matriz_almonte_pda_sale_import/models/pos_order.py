@@ -8,7 +8,7 @@ que crean el pedido de forma programática sin pasar por ``_process_saved_order`
 
 import logging
 
-from odoo import _, models
+from odoo import _, fields, models
 from odoo.exceptions import UserError
 
 _logger = logging.getLogger(__name__)
@@ -16,6 +16,17 @@ _logger = logging.getLogger(__name__)
 
 class PosOrder(models.Model):
     _inherit = "pos.order"
+
+    pda_external_reference = fields.Char(
+        string="Referencia externa PDA",
+        index=True,
+        copy=False,
+        help=(
+            "Identificador del pedido tal y como llega desde la PDA "
+            "(campo 'external_reference'). Permite localizar el pedido "
+            "por su referencia de origen."
+        ),
+    )
 
     def _force_create_picking_real_time(self):
         """Fuerza la creación del albarán en el momento de la importación.
