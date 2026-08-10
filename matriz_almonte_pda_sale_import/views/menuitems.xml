@@ -43,10 +43,11 @@
         groups="matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin"
     />
 
+    <!-- Tokens de Acceso API: se muestra en Ajustes > Técnico -->
     <menuitem
         id="menu_matriz_almonte_pda_tokens"
         name="Tokens de Acceso API"
-        parent="menu_matriz_almonte_pda_config"
+        parent="base.menu_custom"
         action="action_matriz_almonte_api_token"
         sequence="10"
         groups="matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin"
