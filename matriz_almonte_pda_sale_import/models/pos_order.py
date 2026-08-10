@@ -28,6 +28,27 @@ class PosOrder(models.Model):
         ),
     )
 
+    def _prepare_invoice_vals(self):
+        """Fuerza una factura de cliente (``out_invoice``) para los pedidos
+        importados desde la PDA, también cuando el total es negativo.
+
+        Por defecto Odoo genera una nota de crédito (``out_refund``) cuando
+        el importe del pedido es negativo. Para esta integración queremos
+        una **factura simplificada en negativo**: una factura de cliente
+        (``out_invoice``) cuyas líneas llevan cantidades negativas (el
+        signo lo aplica ``_get_invoice_lines_values`` al detectar el pedido
+        como devolución). Solo se fuerza cuando el contexto lo indica, para
+        no alterar el comportamiento estándar del resto del TPV.
+        """
+        vals = super()._prepare_invoice_vals()
+        if self.env.context.get("matriz_almonte_force_out_invoice"):
+            move_type = "out_invoice"
+            vals["move_type"] = move_type
+            vals["invoice_line_ids"] = self._prepare_invoice_lines(move_type)
+            # No es el reverso/abono de otra factura: es una factura propia.
+            vals.pop("reversed_entry_id", None)
+        return vals
+
     def _force_create_picking_real_time(self):
         """Fuerza la creación del albarán en el momento de la importación.
 
@@ -93,7 +114,10 @@ class PosOrder(models.Model):
             )
 
         self.write({"to_invoice": True})
-        self.with_context(generate_pdf=False)._generate_pos_order_invoice()
+        self.with_context(
+            generate_pdf=False,
+            matriz_almonte_force_out_invoice=True,
+        )._generate_pos_order_invoice()
         _logger.info(
             "PDA Import: pedido %s facturado como factura simplificada %s",
             self.name,

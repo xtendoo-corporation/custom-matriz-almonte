@@ -440,7 +440,6 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
 
         print_requested = self._is_print_requested(payload)
         payment = order.payment_ids[:1]
-        sale_order_id = order.env.context.get("pda_sale_order_id")
         response_payload = {
             "success": True,
             "code": "CREATED",
@@ -448,7 +447,6 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             "order_id": order.id,
             "order_name": order.name,
             "is_refund": order.amount_total < 0,
-            "sale_order_id": sale_order_id or False,
             "external_reference": external_ref,
             "session_id": order.session_id.id,
             "session_name": order.session_id.name,
@@ -694,27 +692,6 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
     ):
         _logger.info("🔄 [PDA ORDER] Resolviendo datos del pedido...")
 
-        lines_payload = (
-            payload.get("lineas") if "lineas" in payload else payload.get("lines")
-        )
-
-        # Si la PDA envía importes/cantidades en negativo estamos ante una
-        # DEVOLUCIÓN. En POS no se puede saldar directamente un pedido
-        # negativo suelto de forma fiable, así que se hace en dos pasos
-        # (igual que en el TPV): 1) se crea el pedido de venta en positivo
-        # y 2) se genera una devolución ligada a ese pedido. Ver
-        # ``_create_refund_pair``.
-        if not payload.get("_pda_skip_refund_split") and self._payload_is_refund(
-            payload, lines_payload
-        ):
-            return self._create_refund_pair(
-                payload=payload,
-                token_rec=token_rec,
-                pos_config=pos_config,
-                open_session=open_session,
-                order_uuid=order_uuid,
-                external_ref=external_ref,
-            )
 
         partner = self._resolve_partner(payload, pos_config)
         pricelist = self._resolve_pricelist(
@@ -915,130 +892,6 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
 
         return order
 
-    @classmethod
-    def _payload_is_refund(cls, payload, lines_payload):
-        """Indica si el payload representa una devolución (importes negativos)."""
-        amount_total = payload.get("amount_total")
-        try:
-            if amount_total is not None and float(amount_total) < 0:
-                return True
-        except (TypeError, ValueError):
-            pass
-        for line in lines_payload or []:
-            qty = line.get("qty", line.get("unidades"))
-            try:
-                if qty is not None and float(qty) < 0:
-                    return True
-            except (TypeError, ValueError):
-                continue
-        return False
-
-    @staticmethod
-    def _build_positive_payload(payload):
-        """Devuelve una copia del payload con todos los importes en positivo.
-
-        Se usa para crear el pedido de venta base del que después se hará
-        la devolución.
-        """
-        positive = dict(payload)
-        for key in ("amount_total", "amount_paid"):
-            value = positive.get(key)
-            if isinstance(value, (int, float)):
-                positive[key] = abs(value)
-        lines_key = "lineas" if "lineas" in payload else "lines"
-        new_lines = []
-        for line in payload.get(lines_key, []) or []:
-            new_line = dict(line)
-            for line_field in ("qty", "unidades", "price_unit", "precio"):
-                if isinstance(new_line.get(line_field), (int, float)):
-                    new_line[line_field] = abs(new_line[line_field])
-            new_lines.append(new_line)
-        positive[lines_key] = new_lines
-        return positive
-
-    def _create_refund_pair(
-        self, payload, token_rec, pos_config, open_session, order_uuid, external_ref
-    ):
-        """Crea la venta en positivo y su devolución ligada (dos pasos).
-
-        1. Crea un pedido de venta normal con todos los importes en
-           positivo (pagado y facturado como una venta cualquiera).
-        2. Genera una DEVOLUCIÓN de ese pedido con el flujo estándar de
-           Odoo (``pos.order._refund``), la cobra en negativo y emite la
-           factura rectificativa (abono) ligada a la venta original.
-
-        Devuelve el pedido de DEVOLUCIÓN (que es la operación real que
-        pide la PDA), guardando el id de la venta base en el contexto
-        para incluirlo en la respuesta.
-        """
-        _logger.info("↩️  [PDA ORDER] Devolución detectada.")
-        _logger.info("   1) Creando pedido de venta base (en positivo)...")
-
-        positive_payload = self._build_positive_payload(payload)
-        positive_payload["_pda_skip_refund_split"] = True
-        sale_order = self._create_pos_order_from_payload(
-            payload=positive_payload,
-            token_rec=token_rec,
-            pos_config=pos_config,
-            open_session=open_session,
-            order_uuid=f"{order_uuid}-SALE",
-            external_ref=external_ref,
-        )
-        _logger.info(
-            "   ✅ Venta base creada: %s (ID %s, total=%.2f)",
-            sale_order.name,
-            sale_order.id,
-            sale_order.amount_total,
-        )
-
-        _logger.info("   2) Generando la devolución ligada a la venta...")
-        refund_order = sale_order._refund()
-        refund_order.ensure_one()
-
-        refund_vals = {
-            "uuid": order_uuid,
-            "pda_external_reference": external_ref,
-            "internal_note": (
-                f"PDA external_reference: {external_ref} (devolución de "
-                f"{sale_order.name})"
-            ),
-            "to_invoice": sale_order.to_invoice,
-        }
-        if sale_order.partner_id:
-            refund_vals["partner_id"] = sale_order.partner_id.id
-        refund_order.write(refund_vals)
-        refund_order._compute_prices()
-
-        mark_as_paid = self._coerce_bool(payload.get("mark_as_paid"), default=True)
-        if mark_as_paid:
-            payment_method = self._resolve_payload_payment_method(
-                payload, open_session
-            ) or self._default_payment_method(open_session)
-            # El importe del abono es EXACTAMENTE el total (negativo) del
-            # pedido de devolución calculado por Odoo, para que quede
-            # totalmente saldado.
-            refund_order.add_payment(
-                {
-                    "pos_order_id": refund_order.id,
-                    "payment_method_id": payment_method.id,
-                    "amount": refund_order.amount_total,
-                    "payment_date": payload.get("date_order")
-                    or fields.Datetime.now(),
-                    "uuid": str(uuid4()),
-                }
-            )
-            refund_order._compute_prices()
-            refund_order.action_pos_order_paid()
-            refund_order.matriz_almonte_generate_picking_and_invoice()
-
-        _logger.info(
-            "   ✅ Devolución creada: %s (ID %s, total=%.2f), ligada a %s.",
-            refund_order.name,
-            refund_order.id,
-            refund_order.amount_total,
-            sale_order.name,
-        )
-        return refund_order.with_context(pda_sale_order_id=sale_order.id)
 
     @staticmethod
     def _resolve_pricelist(payload, partner, pos_config, company):
