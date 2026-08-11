@@ -1025,13 +1025,14 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         product = self._resolve_product(line_payload)
         qty = float(line_payload.get("qty", line_payload.get("unidades")))
         raw_price = line_payload.get("price_unit", line_payload.get("precio"))
-        price_unit = float(raw_price or 0.0)
+        # La PDA envía SIEMPRE ``price_unit`` con IMPUESTOS INCLUIDOS.
+        price_unit_incl = float(raw_price or 0.0)
         # La PDA puede enviar ``price_unit`` a 0 (por ejemplo en las
         # devoluciones): en ese caso se toma el precio de catálogo del
         # producto para que el total de la línea (y por tanto el importe
         # a devolver) sea correcto en vez de quedar a cero.
-        if not price_unit:
-            price_unit = float(product.lst_price or 0.0)
+        if not price_unit_incl:
+            price_unit_incl = float(product.lst_price or 0.0)
         discount = float(line_payload.get("discount", 0.0) or 0.0)
 
         taxes = product.taxes_id.filtered_domain(
@@ -1043,19 +1044,15 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             else request.env["account.fiscal.position"]
         )
         taxes_after_fpos = fiscal_position.map_tax(taxes) if fiscal_position else taxes
-        unit_price_after_discount = price_unit * (1 - discount / 100.0)
+        unit_price_after_discount = price_unit_incl * (1 - discount / 100.0)
 
         # La PDA envía SIEMPRE precios finales, con impuestos incluidos
         # (tanto ``price_unit`` de cada línea como ``amount_total``/
-        # ``amount_paid`` de cabecera). Por eso forzamos
-        # ``force_price_include=True`` en el motor de impuestos: le
-        # indica a Odoo que ``unit_price_after_discount`` es el TOTAL ya
-        # con impuestos, y debe calcular hacia atrás la base imponible,
-        # en vez de sumar el impuesto por encima (que es lo que hacía
-        # antes, inflando el total muy por encima de lo que el cliente
-        # pagó realmente). Este comportamiento no depende de cómo esté
-        # configurado el campo "Incluido en el precio" del impuesto en
-        # el producto: se aplica siempre para esta integración.
+        # ``amount_paid`` de cabecera). Con ``force_price_include=True``
+        # (que Odoo mapea a ``special_mode='total_included'``) el motor de
+        # impuestos interpreta ``unit_price_after_discount`` como el TOTAL
+        # ya con impuestos y calcula la base hacia atrás, sin depender de
+        # cómo esté configurado el impuesto.
         tax_data = taxes_after_fpos.with_context(
             force_price_include=True
         ).compute_all(
@@ -1065,33 +1062,44 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             product=product,
             partner=partner if partner else False,
         )
+        total_excluded = tax_data["total_excluded"]
+        total_included = tax_data["total_included"]
 
-        # `price_unit` en ``pos.order.line`` se guarda SIN impuestos y
-        # ANTES de descuento (así lo hace el resto de Odoo: "Tax Excl."
-        # es ``price_subtotal`` = qty * price_unit * (1 - discount/100)).
-        # Como el ``price_unit`` recibido es CON impuestos, lo
-        # recalculamos a partir del total sin impuestos ya obtenido.
+        # ``pos.order._compute_prices()`` recalcula el total del pedido a
+        # partir de ``line.price_unit`` INTERPRETÁNDOLO según el flag
+        # ``price_include`` del impuesto:
+        #   - Impuesto "incluido en el precio" (típico IVA español en TPV):
+        #     ``price_unit`` se trata como precio CON impuestos.
+        #   - Impuesto añadido por encima: ``price_unit`` se trata como
+        #     precio SIN impuestos.
+        # Por eso guardamos ``price_unit`` en la convención correcta según
+        # el impuesto; si no, base/impuestos/total salían mal.
+        price_included = bool(taxes_after_fpos) and all(
+            t.price_include for t in taxes_after_fpos
+        )
         if qty and discount != 100:
-            price_unit_excl = (tax_data["total_excluded"] / qty) / (
-                1 - discount / 100.0
-            )
+            divisor = qty * (1 - discount / 100.0)
+            if price_included:
+                line_price_unit = total_included / divisor
+            else:
+                line_price_unit = total_excluded / divisor
         else:
-            price_unit_excl = 0.0
+            line_price_unit = price_unit_incl if price_included else 0.0
 
         return (
             {
                 "name": str(line_payload.get("description") or product.display_name),
                 "product_id": product.id,
                 "qty": qty,
-                "price_unit": price_unit_excl,
+                "price_unit": line_price_unit,
                 "discount": discount,
                 "tax_ids": [(6, 0, taxes.ids)],
-                "price_subtotal": tax_data["total_excluded"],
-                "price_subtotal_incl": tax_data["total_included"],
+                "price_subtotal": total_excluded,
+                "price_subtotal_incl": total_included,
                 "uuid": str(line_payload.get("uuid") or uuid4()),
             },
-            tax_data["total_included"] - tax_data["total_excluded"],
-            tax_data["total_included"],
+            total_included - total_excluded,
+            total_included,
         )
 
     @staticmethod
