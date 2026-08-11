@@ -805,6 +805,14 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         )
         order = order_model.create(order_dict)
 
+        # Marca el pedido como "factura simplificada" española para que el
+        # número de la factura aparezca en el campo estándar
+        # ``l10n_es_simplified_invoice_number`` (columna "Número de factura
+        # simplificada"). El campo es computado a partir de account_move.name
+        # cuando este flag está activo.
+        if "is_l10n_es_simplified_invoice" in order._fields:
+            order.is_l10n_es_simplified_invoice = True
+
         # `amount_total`/`amount_tax` en `order_dict` son una suma manual
         # línea a línea calculada en este controlador (vía
         # ``_prepare_order_line_vals``). Esa suma puede no coincidir con
