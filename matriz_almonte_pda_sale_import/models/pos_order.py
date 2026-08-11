@@ -27,6 +27,17 @@ class PosOrder(models.Model):
             "por su referencia de origen."
         ),
     )
+    pda_simplified_invoice_number = fields.Char(
+        string="Nº factura simplificada (PDA)",
+        index=True,
+        copy=False,
+        readonly=True,
+        help=(
+            "Número de la factura simplificada (account.move) generada al "
+            "importar el pedido desde la PDA. Se guarda para poder "
+            "identificarla/reimprimirla fácilmente."
+        ),
+    )
 
 
     def _force_create_picking_real_time(self):
@@ -72,6 +83,8 @@ class PosOrder(models.Model):
 
         # Factura simplificada.
         if self.account_move:
+            if not self.pda_simplified_invoice_number:
+                self.pda_simplified_invoice_number = self.account_move.name
             return self.account_move
 
         if not self.config_id.invoice_journal_id:
@@ -95,6 +108,11 @@ class PosOrder(models.Model):
 
         self.write({"to_invoice": True})
         self.with_context(generate_pdf=False)._generate_pos_order_invoice()
+        # Guardamos el número de la factura simplificada en el pedido para
+        # poder identificarla/reimprimirla sin depender de recomputar el
+        # enlace ``account_move``.
+        if self.account_move:
+            self.pda_simplified_invoice_number = self.account_move.name
         _logger.info(
             "PDA Import: pedido %s facturado como %s %s",
             self.name,

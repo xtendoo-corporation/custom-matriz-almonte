@@ -3,6 +3,7 @@
 
 import json
 import logging
+import base64
 import socket
 import unicodedata
 from urllib.parse import urlsplit, urlunsplit
@@ -458,6 +459,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             "state": order.state,
             "invoice_id": order.account_move.id if order.account_move else False,
             "invoice_name": order.account_move.name if order.account_move else False,
+            "simplified_invoice_number": order.pda_simplified_invoice_number or False,
             "picking_ids": order.picking_ids.ids,
             "print_requested": print_requested,
             "printed": False,
@@ -1106,7 +1108,109 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             return cls._coerce_bool(payload.get("is_printer"))
         return cls._coerce_bool(payload.get("imprimir", False))
 
+    def _print_factura_simplificada(self, order):
+        """Llama a la acción ``action_print_factura_simplificada`` del pedido.
+
+        Esta acción (definida en el módulo ``pos_conventional``) devuelve el
+        informe de la factura simplificada 80 mm de la ``account.move``. Aquí
+        se invoca y, a partir del informe que indica, se renderiza el PDF, se
+        guarda como adjunto del pedido y se devuelve tanto la URL del informe
+        (HTML) como el PDF en base64 para que la PDA lo abra/imprima.
+
+        Devuelve ``None`` si la acción no está disponible o no aplica, para
+        que ``_dispatch_order_print`` continúe con la impresión térmica.
+        """
+        try:
+            # ====== LLAMADA A LA ACCIÓN ======
+            action = order.action_print_factura_simplificada()
+        except Exception as exc:  # noqa: BLE001 - la impresión no debe romper
+            _logger.exception(
+                "[PDA ORDER] Error llamando a action_print_factura_simplificada "
+                "en el pedido %s: %s",
+                order.name,
+                exc,
+            )
+            return {"printed": False, "print_error": str(exc)}
+
+        if not action or action.get("type") != "ir.actions.report":
+            _logger.warning(
+                "[PDA ORDER] action_print_factura_simplificada no devolvió un "
+                "informe para el pedido %s.",
+                order.name,
+            )
+            return None
+
+        report_name = action.get("report_name")
+        move = order.account_move
+        # URL del informe HTML (mismo patrón que usa pos_conventional).
+        report_url = f"/report/html/{report_name}/{move.id}"
+
+        response = {
+            "printed": True,
+            "print_mode": "factura_simplificada",
+            "invoice_id": move.id,
+            "invoice_name": move.name,
+            "report_name": report_name,
+            "report_url": report_url,
+        }
+
+        # Renderizamos también el PDF (best-effort) y lo adjuntamos al pedido.
+        try:
+            report = (
+                request.env["ir.actions.report"]
+                .sudo()
+                ._get_report_from_name(report_name)
+            )
+            pdf_bytes, _content_type = report._render_qweb_pdf(report_name, move.ids)
+            pdf_b64 = base64.b64encode(pdf_bytes).decode("ascii")
+            attachment = (
+                request.env["ir.attachment"]
+                .sudo()
+                .create(
+                    {
+                        "name": f"Factura_simplificada_{move.name}.pdf".replace(
+                            "/", "-"
+                        ),
+                        "type": "binary",
+                        "datas": pdf_b64,
+                        "res_model": "pos.order",
+                        "res_id": order.id,
+                        "mimetype": "application/pdf",
+                    }
+                )
+            )
+            response.update(
+                {
+                    "ticket_pdf_base64": pdf_b64,
+                    "ticket_pdf_url": f"/web/content/{attachment.id}?download=true",
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - el PDF es opcional
+            _logger.warning(
+                "[PDA ORDER] No se pudo renderizar el PDF de la factura "
+                "simplificada del pedido %s: %s",
+                order.name,
+                exc,
+            )
+            response["print_error"] = f"PDF no generado: {exc}"
+
+        _logger.info(
+            "[PDA ORDER] Factura simplificada impresa para el pedido %s (%s).",
+            order.name,
+            move.name,
+        )
+        return response
+
     def _dispatch_order_print(self, order, pos_config):
+        # 0) Impresión de la FACTURA SIMPLIFICADA oficial (80 mm) llamando a
+        #    la acción ``action_print_factura_simplificada`` del pedido
+        #    (módulo pos_conventional). Es el método preferente cuando el
+        #    pedido ya está facturado y la acción está disponible.
+        if order.account_move and hasattr(order, "action_print_factura_simplificada"):
+            result = self._print_factura_simplificada(order)
+            if result is not None:
+                return result
+
         # 1) Impresión DIRECTA en la impresora térmica de 80 mm por red
         #    (RAW/ESC-POS sobre TCP, puerto 9100 por defecto) cuando el
         #    TPV tiene configurada la IP de la impresora.
