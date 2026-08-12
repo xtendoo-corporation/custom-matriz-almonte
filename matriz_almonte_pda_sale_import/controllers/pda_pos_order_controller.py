@@ -1262,9 +1262,37 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
 
         if raster_bytes:
             doc_name = f"Factura_{move.name or order.name}"
+            last_error = None
 
+            # 1) QZ Tray (impresora USB conectada al PC de la tienda, sin
+            #    IP de red propia): no podemos alcanzarla por TCP ni por un
+            #    bridge HTTP desde el servidor. En su lugar, publicamos los
+            #    bytes ESC/POS ya generados en el BUS de Odoo, en el mismo
+            #    canal que usa el frontend del POS
+            #    (``pos_config.access_token``, vía ``pos.bus.mixin``). Un
+            #    listener JS (módulo ``pos_printing_qztray`` + nuestro
+            #    listener) recibe la notificación y llama a
+            #    ``QZConnection.print()`` exactamente igual que hace el
+            #    botón manual, sin intervención del usuario.
+            if getattr(pos_config, "is_qztray", False):
+                qztray_result = self._send_qztray_print(
+                    order, pos_config, raster_bytes, doc_name=doc_name
+                )
+                if qztray_result.get("printed"):
+                    response.update(qztray_result)
+                    response["printed"] = True
+                    response["print_mode"] = "factura_simplificada_qztray"
+                    _logger.info(
+                        "[PDA ORDER] Factura simplificada %s enviada por "
+                        "QZ Tray (bus) para el pedido %s.",
+                        move.name,
+                        order.name,
+                    )
+                    return response
+                last_error = qztray_result.get("print_error")
+
+            # 2) Impresora térmica con IP de red propia (TCP directo).
             printer_cfg = self._get_direct_printer_config(pos_config)
-            tcp_error = None
             if printer_cfg.get("host"):
                 tcp_result = self._print_ticket_via_socket(
                     order, printer_cfg, raw_bytes=raster_bytes
@@ -1280,8 +1308,9 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                         order.name,
                     )
                     return response
-                tcp_error = tcp_result.get("print_error")
+                last_error = tcp_result.get("print_error")
 
+            # 3) Bridge local HTTP (xtendoo_cash_drawer_windows_client).
             bridge_result = self._send_bridge_print(
                 order,
                 pos_config,
@@ -1301,7 +1330,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 return response
 
             response["print_error"] = (
-                tcp_error
+                last_error
                 or bridge_result.get("print_error")
                 or response.get("print_error")
             )
@@ -1313,6 +1342,77 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             response.get("print_error"),
         )
         return response
+
+    def _send_qztray_print(self, order, pos_config, raster_bytes, doc_name=None):
+        """Publica el ticket (bytes ESC/POS) en el BUS de Odoo para que el
+        frontend del POS (con QZ Tray activo) lo imprima directamente.
+
+        Caso de uso: impresora térmica conectada por USB al PC de la
+        tienda (sin IP de red propia), donde la única forma de imprimir es
+        a través del navegador que ya tiene la conexión con QZ Tray
+        establecida (igual que hace el botón manual "Factura simplificada
+        80mm"). El servidor no puede conectar con QZ Tray directamente
+        (corre en localhost del PC de la tienda), así que en su lugar:
+
+          1. Reutiliza el mismo canal de tiempo real que usa internamente
+             ``point_of_sale`` (``pos_config.access_token``, provisto por
+             ``pos.bus.mixin``).
+          2. Publica una notificación ``PDA_PRINT_TICKET`` con los bytes
+             ESC/POS ya generados (en base64) y el nombre de la impresora
+             QZ Tray configurada en el TPV.
+          3. Un listener JS (ver
+             ``static/src/app/pda_qztray_print_listener.esm.js``, cargado
+             en el frontend del POS junto con ``pos_printing_qztray``)
+             recibe la notificación y llama a ``QZConnection.print()``
+             exactamente igual que el botón manual.
+
+        Al ser una notificación en tiempo real (fire-and-forget), no hay
+        confirmación síncrona de que el navegador la haya recibido o
+        impreso; se marca ``printed: True`` de forma optimista y se añade
+        ``print_delivery: "async_qztray_bus"`` para dejar constancia de
+        esa particularidad (requiere que haya una sesión del POS de esa
+        tienda abierta en un navegador con QZ Tray en ejecución).
+        """
+        printer_name = (
+            pos_config.iface_qztray_printer_id.display_name
+            if "iface_qztray_printer_id" in pos_config._fields
+            and pos_config.iface_qztray_printer_id
+            else "QZTray"
+        )
+        try:
+            escpos_b64 = base64.b64encode(raster_bytes).decode("ascii")
+            pos_config._notify(
+                "PDA_PRINT_TICKET",
+                {
+                    "escpos_base64": escpos_b64,
+                    "printer_name": printer_name,
+                    "doc_name": doc_name or f"PDA_POS_{order.name or order.id}",
+                    "order_id": order.id,
+                    "order_name": order.name,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 - la impresión no debe romper
+            _logger.exception(
+                "[PDA ORDER] Error publicando ticket en el bus (QZ Tray) "
+                "para el pedido %s: %s",
+                order.name,
+                exc,
+            )
+            return {"printed": False, "print_error": str(exc)}
+
+        _logger.info(
+            "[PDA ORDER] Ticket publicado en el bus (canal %s) para QZ "
+            "Tray del pedido %s. Impresora: %s.",
+            pos_config.access_token,
+            order.name,
+            printer_name,
+        )
+        return {
+            "printed": True,
+            "print_mode": "qztray_bus",
+            "print_delivery": "async_qztray_bus",
+            "print_printer": printer_name,
+        }
 
     @staticmethod
     def _get_printer_width_dots(pos_config):
