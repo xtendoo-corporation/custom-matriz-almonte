@@ -23,7 +23,7 @@
         "views/menuitems.xml",
     ],
     "assets": {
-        "point_of_sale._assets_pos": [
+        "web.assets_backend": [
             "matriz_almonte_pda_sale_import/static/src/app/pda_qztray_print_listener.esm.js",
         ],
     },

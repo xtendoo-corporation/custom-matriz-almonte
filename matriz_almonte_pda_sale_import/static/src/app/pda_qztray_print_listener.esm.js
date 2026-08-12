@@ -1,114 +1,143 @@
 /** @odoo-module **/
 
-import { patch } from "@web/core/utils/patch";
-import { PosStore } from "@point_of_sale/app/services/pos_store";
+import { registry } from "@web/core/registry";
 
 /**
- * Listener de impresión automática para pedidos importados desde la PDA.
+ * Servicio de impresión automática para pedidos importados desde la PDA.
  * ------------------------------------------------------------------------
  * Cuando un pedido llega a Odoo desde la PDA (endpoint
  * ``/api/matriz_almonte/pda/pos/order``) y ya está completamente integrado
  * (albarán + factura simplificada generados), el backend
  * (``matriz_almonte_pda_sale_import``) necesita imprimir físicamente el
- * ticket en la impresora térmica de la tienda.
+ * ticket en la impresora térmica de la tienda, EXACTAMENTE igual que
+ * ocurre al pulsar el botón manual "Factura simplificada 80mm" del
+ * formulario del pedido.
  *
- * Cuando esa impresora está conectada por USB (sin IP de red propia) y el
- * mecanismo de impresión real es QZ Tray (exactamente igual que el botón
- * manual "Factura simplificada 80mm" del formulario del pedido), el
- * servidor NO puede conectar directamente con QZ Tray: ese servicio
- * escucha en localhost del PC de la tienda, no es alcanzable desde el
- * servidor Odoo.
+ * En lugar de reimplementar la lógica de impresión (QZ Tray, IPP/CUPS,
+ * etc. — depende de qué módulo de impresión directa esté instalado:
+ * ``base_report_to_printer_qztray``, ``pos_printing_qztray`` u otro), este
+ * servicio simplemente REPRODUCE el click manual:
  *
- * La solución: el backend publica los bytes ESC/POS ya generados (a
- * partir del PDF real de la factura simplificada) en el mismo canal en
- * tiempo real que usa internamente el POS
- * (``pos_config.access_token``, vía ``pos.bus.mixin``), con el evento
- * ``PDA_PRINT_TICKET``. Este listener, activo mientras el POS de la
- * tienda esté abierto en un navegador (donde QZ Tray sí está disponible),
- * recibe esa notificación y llama a ``QZConnection.print()`` — el MISMO
- * mecanismo que usa el módulo ``pos_printing_qztray`` para los tickets de
- * venta normales — para imprimir el ticket sin intervención manual.
+ *   1. El backend publica en el bus una notificación con el ``order_id``
+ *      (canal ``pos_config.access_token``, el mismo que usa
+ *      internamente ``point_of_sale`` vía ``pos.bus.mixin``).
+ *   2. Este servicio (cargado en el backend general, ``web.assets_backend``
+ *      — el MISMO contexto donde vive el botón "Factura simplificada
+ *      80mm" y donde el módulo de impresión directa está activo) recibe
+ *      la notificación.
+ *   3. Llama por RPC a ``action_print_factura_simplificada`` (la MISMA
+ *      acción que el botón) y ejecuta el resultado con
+ *      ``action.doAction()`` — el MISMO mecanismo que usa Odoo al pulsar
+ *      cualquier botón que devuelve una acción de informe. Si hay una
+ *      impresora configurada (QZ Tray o la que sea) para ese informe, se
+ *      imprime directamente, igual que en el click manual.
  *
- * El import de QZConnection es DINÁMICO a propósito: si el módulo
- * ``pos_printing_qztray`` no está instalado en un TPV concreto, este
- * listener simplemente registra un aviso en consola y no hace nada, sin
- * romper el resto del POS.
+ * IMPORTANTE: requiere que haya una sesión de Odoo (backend, no
+ * necesariamente el POS táctil) abierta en un navegador del PC de la
+ * tienda. Cada intento se confirma (ACK) al servidor llamando a
+ * ``/api/matriz_almonte/pda/pos/print_ack``, visible en el campo "Estado
+ * impresión PDA" del pedido.
  */
-patch(PosStore.prototype, {
-    async setup(env, deps) {
-        await super.setup(env, deps);
-        this._setupPdaQzTrayPrintListener();
+export const pdaAutoPrintService = {
+    dependencies: ["orm", "bus_service", "action"],
+
+    start(env, { orm, bus_service, action }) {
+        this._subscribeToAllPosConfigs(orm, bus_service, action);
+        return {};
     },
 
-    _setupPdaQzTrayPrintListener() {
+    async _subscribeToAllPosConfigs(orm, bus_service, action) {
+        let configs = [];
         try {
-            this.data.connectWebSocket(
-                "PDA_PRINT_TICKET",
-                this._onPdaPrintTicket.bind(this)
-            );
-            console.info(
-                "[PDA][QZTray] Listener de impresión automática registrado " +
-                    "(canal PDA_PRINT_TICKET)."
+            configs = await orm.searchRead(
+                "pos.config",
+                [],
+                ["access_token", "name"]
             );
         } catch (error) {
             console.error(
-                "[PDA][QZTray] No se pudo registrar el listener de impresión " +
-                    "automática de pedidos PDA:",
+                "[PDA][AutoPrint] No se pudieron leer los pos.config para " +
+                    "suscribirse a la impresión automática:",
                 error
             );
-        }
-    },
-
-    async _onPdaPrintTicket(payload) {
-        if (!payload || !payload.escpos_base64) {
             return;
         }
 
-        const orderLabel = payload.order_name || payload.order_id || "?";
+        for (const config of configs) {
+            if (!config.access_token) {
+                continue;
+            }
+            bus_service.addChannel(config.access_token);
+            bus_service.subscribe(
+                `${config.access_token}-PDA_PRINT_TICKET`,
+                (payload) => this._onPdaPrintTicket(payload, orm, action)
+            );
+        }
+
+        // eslint-disable-next-line no-console
         console.info(
-            `[PDA][QZTray] Ticket recibido para imprimir (pedido ${orderLabel}).`
+            "%c[PDA][AutoPrint] Servicio de impresión automática REGISTRADO " +
+                `para ${configs.length} punto(s) de venta.`,
+            "color: #28ffeb; font-weight: bold;"
+        );
+    },
+
+    async _onPdaPrintTicket(payload, orm, action) {
+        if (!payload || !payload.order_id) {
+            return;
+        }
+        const orderLabel = payload.order_name || payload.order_id;
+        console.info(
+            `[PDA][AutoPrint] Notificación recibida: imprimir pedido ${orderLabel}.`
         );
 
-        let QZConnection;
         try {
-            ({ QZConnection } = await import(
-                "@pos_printing_qztray/app/printer/qz_tray_connection.esm"
-            ));
-        } catch (error) {
-            console.error(
-                "[PDA][QZTray] El módulo 'pos_printing_qztray' no está " +
-                    "disponible en este POS; no se puede imprimir " +
-                    `automáticamente el ticket del pedido ${orderLabel}.`,
-                error
+            const reportAction = await orm.call(
+                "pos.order",
+                "action_print_factura_simplificada",
+                [[payload.order_id]]
             );
-            return;
-        }
-
-        try {
-            await QZConnection.print(payload.printer_name || "QZTray", [
-                {
-                    type: "raw",
-                    format: "base64",
-                    data: payload.escpos_base64,
-                },
-            ]);
-            console.info(
-                `[PDA][QZTray] Ticket del pedido ${orderLabel} impreso ` +
-                    "correctamente vía QZ Tray."
-            );
-        } catch (error) {
-            console.error(
-                `[PDA][QZTray] Error imprimiendo el ticket del pedido ` +
-                    `${orderLabel} vía QZ Tray:`,
-                error
-            );
-        } finally {
-            try {
-                await QZConnection.disconnect();
-            } catch {
-                /* Ignorar errores de desconexión */
+            if (!reportAction) {
+                await this._ackPrint(
+                    orm,
+                    payload.order_id,
+                    false,
+                    "action_print_factura_simplificada no devolvió ninguna acción."
+                );
+                return;
             }
+            await action.doAction(reportAction);
+            console.info(
+                `[PDA][AutoPrint] Acción de impresión ejecutada para el ` +
+                    `pedido ${orderLabel}.`
+            );
+            await this._ackPrint(orm, payload.order_id, true, "");
+        } catch (error) {
+            const msg = error?.message?.message || error?.message || String(error);
+            console.error(
+                `[PDA][AutoPrint] Error imprimiendo el pedido ${orderLabel}:`,
+                error
+            );
+            await this._ackPrint(orm, payload.order_id, false, msg);
         }
     },
-});
+
+    async _ackPrint(orm, orderId, success, message) {
+        try {
+            await orm.call("pos.order", "pda_print_ack_rpc", [
+                [orderId],
+                success,
+                message ? String(message).slice(0, 250) : "",
+                "backend_doAction",
+            ]);
+        } catch (ackError) {
+            console.error("[PDA][AutoPrint] No se pudo enviar el ACK:", ackError);
+        }
+    },
+};
+
+registry.category("services").add("pda_auto_print_service", pdaAutoPrintService);
+
+
+
 

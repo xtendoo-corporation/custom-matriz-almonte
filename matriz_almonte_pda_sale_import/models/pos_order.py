@@ -38,6 +38,73 @@ class PosOrder(models.Model):
             "identificarla/reimprimirla fácilmente."
         ),
     )
+    pda_print_mode = fields.Char(
+        string="Método de impresión PDA",
+        copy=False,
+        readonly=True,
+        help="Método usado en el último intento de impresión automática "
+        "del pedido (backend_action_bus, direct_tcp, bridge, etc.).",
+    )
+    pda_print_ack_state = fields.Selection(
+        selection=[
+            ("pending", "Pendiente de confirmación"),
+            ("success", "Impreso correctamente"),
+            ("error", "Error al imprimir"),
+        ],
+        string="Estado impresión PDA",
+        copy=False,
+        readonly=True,
+        help="Confirmación real, enviada por el navegador con la sesión de "
+        "Odoo abierta en la tienda, de si se pudo reproducir la impresión "
+        "automática (llamando a la misma acción que el botón 'Factura "
+        "simplificada 80mm'). 'Pendiente' significa que el servidor "
+        "publicó la notificación en el bus pero ningún navegador ha "
+        "confirmado (aún) haberla recibido/procesado: lo más probable es "
+        "que no haya ninguna sesión de Odoo abierta en la tienda en ese "
+        "momento, o que el bundle de assets no se haya actualizado tras "
+        "el último despliegue.",
+    )
+    pda_print_ack_message = fields.Char(
+        string="Detalle impresión PDA",
+        copy=False,
+        readonly=True,
+    )
+    pda_print_ack_date = fields.Datetime(
+        string="Fecha confirmación impresión PDA",
+        copy=False,
+        readonly=True,
+    )
+
+    def pda_print_ack_rpc(self, success, message="", stage="print"):
+        """Confirmación (ACK) llamada por RPC desde el servicio JS
+        ``pda_auto_print_service`` tras intentar reproducir la impresión
+        automática del pedido (ver
+        ``static/src/app/pda_qztray_print_listener.esm.js``).
+
+        Permite diagnosticar de forma fiable el punto exacto del fallo:
+        si el campo se queda en ``pending`` es que ningún navegador con
+        una sesión de Odoo abierta llegó a recibir la notificación del
+        bus; si llega ``error``, sí la recibió pero la acción de
+        impresión falló (revisar ``message``).
+        """
+        self.ensure_one()
+        state = "success" if success else "error"
+        self.sudo().write(
+            {
+                "pda_print_ack_state": state,
+                "pda_print_ack_message": (message or "")[:250],
+                "pda_print_ack_date": fields.Datetime.now(),
+            }
+        )
+        _logger.info(
+            "[PDA ORDER] ACK de impresión recibido para el pedido %s "
+            "(stage=%s): %s%s",
+            self.name,
+            stage or "print",
+            state,
+            f" - {message}" if message else "",
+        )
+        return True
 
 
     def _force_create_picking_real_time(self):

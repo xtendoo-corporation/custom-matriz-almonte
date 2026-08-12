@@ -11,8 +11,35 @@
             <field name="pos_reference" position="after">
                 <field name="pda_external_reference" readonly="1" />
             </field>
+            <field name="pos_reference" position="after">
+                <field
+                    name="pda_print_mode"
+                    readonly="1"
+                    invisible="not pda_print_mode"
+                />
+                <field
+                    name="pda_print_ack_state"
+                    readonly="1"
+                    invisible="not pda_print_ack_state"
+                    widget="badge"
+                    decoration-success="pda_print_ack_state == 'success'"
+                    decoration-warning="pda_print_ack_state == 'pending'"
+                    decoration-danger="pda_print_ack_state == 'error'"
+                />
+                <field
+                    name="pda_print_ack_message"
+                    readonly="1"
+                    invisible="not pda_print_ack_message"
+                />
+                <field
+                    name="pda_print_ack_date"
+                    readonly="1"
+                    invisible="not pda_print_ack_date"
+                />
+            </field>
         </field>
     </record>
+
 
     <!-- Lista: columna opcional con la referencia externa de la PDA -->
     <record id="view_pos_order_tree_pda_reference" model="ir.ui.view">
