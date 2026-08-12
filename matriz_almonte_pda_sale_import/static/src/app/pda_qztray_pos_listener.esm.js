@@ -14,17 +14,42 @@ function log(title, ...details) {
 patch(PosStore.prototype, {
     async setup(...args) {
         await super.setup(...args);
+        this._pdaPrintOrdersProcessed = new Set();
         this.data.connectWebSocket(
             "PDA_PRINT_TICKET",
             this._onPdaQzTrayTicket.bind(this)
         );
         log("LISTENER NATIVO POS REGISTRADO", `POS: ${this.config?.name || "?"}`);
+        this._loadPendingPdaPrintJobs();
+    },
+
+    async _loadPendingPdaPrintJobs() {
+        try {
+            const jobs = await this.data.orm.call(
+                "pos.order",
+                "pda_get_pending_print_jobs",
+                [this.config.id]
+            );
+            log("TRABAJOS PENDIENTES RECUPERADOS", `Cantidad: ${jobs.length}`, jobs);
+            for (const job of jobs) {
+                await this._onPdaQzTrayTicket(job);
+            }
+        } catch (error) {
+            console.error(SEP);
+            console.error("[PDA][QZTray][POS] ERROR RECUPERANDO PENDIENTES", error);
+            console.error(SEP);
+        }
     },
 
     async _onPdaQzTrayTicket(payload) {
         if (!payload?.order_id) {
             return;
         }
+        if (this._pdaPrintOrdersProcessed.has(payload.order_id)) {
+            log("TRABAJO DUPLICADO IGNORADO", `Pedido ID: ${payload.order_id}`);
+            return;
+        }
+        this._pdaPrintOrdersProcessed.add(payload.order_id);
         const printAction = payload.print_action;
         log("NOTIFICACIÓN RECIBIDA", payload);
         if (!printAction || printAction.type !== "ir.actions.client") {

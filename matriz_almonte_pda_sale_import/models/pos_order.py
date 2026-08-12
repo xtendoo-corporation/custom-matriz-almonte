@@ -8,7 +8,7 @@ que crean el pedido de forma programática sin pasar por ``_process_saved_order`
 
 import logging
 
-from odoo import _, fields, models
+from odoo import _, api, fields, models
 from odoo.exceptions import UserError
 
 _logger = logging.getLogger(__name__)
@@ -74,6 +74,49 @@ class PosOrder(models.Model):
         copy=False,
         readonly=True,
     )
+    pda_print_action = fields.Json(
+        string="Acción pendiente de impresión PDA",
+        copy=False,
+        readonly=True,
+    )
+
+    @api.model
+    def pda_get_pending_print_jobs(self, config_id):
+        """Devuelve trabajos QZ Tray pendientes del POS indicado.
+
+        Es el respaldo persistente del bus: si la notificación en tiempo real
+        se pierde, el frontend la recupera al arrancar o recargar el POS.
+        """
+        orders = self.sudo().search(
+            [
+                ("config_id", "=", int(config_id)),
+                ("pda_print_ack_state", "=", "pending"),
+            ],
+            order="id asc",
+            limit=50,
+        )
+        jobs = []
+        for order in orders:
+            action = order.pda_print_action
+            if not action and hasattr(order, "action_print_factura_simplificada"):
+                try:
+                    action = order.action_print_factura_simplificada()
+                    if action:
+                        order.sudo().pda_print_action = action
+                except Exception:  # noqa: BLE001 - un trabajo no bloquea los demás
+                    _logger.exception(
+                        "[PDA ORDER] No se pudo regenerar la acción pendiente "
+                        "del pedido %s.",
+                        order.name,
+                    )
+            if not action:
+                continue
+            jobs.append({
+                "order_id": order.id,
+                "order_name": order.name,
+                "print_action": action,
+            })
+        return jobs
 
     def pda_print_ack_rpc(self, success, message="", stage="print"):
         """Confirmación (ACK) llamada por RPC desde el servicio JS

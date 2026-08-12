@@ -1434,6 +1434,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                     "pda_print_ack_state": "pending",
                     "pda_print_ack_message": False,
                     "pda_print_ack_date": False,
+                    "pda_print_action": print_action or False,
                 }
             )
         try:
