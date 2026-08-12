@@ -39,6 +39,14 @@ _PDF_RASTER_DPI = 203
 # evita problemas de buffer en impresoras térmicas con tickets largos.
 _ESCPOS_RASTER_CHUNK_LINES = 256
 
+# Tiempo máximo (segundos) que se espera la confirmación (ACK) de un
+# navegador tras publicar la notificación de impresión QZ Tray en el bus,
+# antes de recurrir al respaldo de impresión directa (TCP/bridge). Evita
+# que un pedido se quede "impreso" solo de forma optimista cuando en
+# realidad ningún navegador ha recibido/ejecutado la notificación.
+_PDA_PRINT_ACK_TIMEOUT = 5.0
+_PDA_PRINT_ACK_POLL_INTERVAL = 0.5
+
 
 def _json_response(data, status=200):
     body = json.dumps(data, ensure_ascii=False, default=str)
@@ -1235,9 +1243,15 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         #   {type: "ir.actions.client",
         #    tag: "pos_conventional_print_receipt_qztray_window", ...}
         # Esa es la acción directa y oficial que usa el botón manual para
-        # imprimir mediante QZ Tray. No debe tratarse como informe ni
-        # renderizarse en el servidor: se publica inmediatamente para que el
-        # navegador ejecute su tag con ``action.doAction()``.
+        # imprimir mediante QZ Tray. Se publica en el bus para que el
+        # navegador ejecute su tag con ``action.doAction()``, PERO no basta
+        # con publicarla: si ningún navegador la recibe (bundle de assets
+        # desactualizado, o ninguna sesión de Odoo/POS abierta en la
+        # tienda) el ticket no llegaría a imprimirse nunca aunque el
+        # backend lo diera por bueno de forma optimista. Por eso se espera
+        # brevemente la confirmación real (ACK) y, si no llega, se recurre
+        # al mismo respaldo de impresión directa (TCP/bridge) que se usa
+        # para las acciones de tipo informe.
         if action_type == "ir.actions.client":
             _logger.info(
                 "[PDA ORDER] Acción cliente de impresión directa detectada "
@@ -1249,9 +1263,41 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             dispatch_result = self._send_qztray_print(
                 order, pos_config, print_action=action
             )
-            response.update(dispatch_result)
             if dispatch_result.get("printed"):
-                response["print_mode"] = "factura_simplificada_qztray_client_action"
+                ack_state = self._wait_for_pda_print_ack(order)
+                if ack_state == "success":
+                    response.update(dispatch_result)
+                    response["print_mode"] = (
+                        "factura_simplificada_qztray_client_action"
+                    )
+                    return response
+                _logger.warning(
+                    "[PDA ORDER] Sin confirmación de ningún navegador para "
+                    "el pedido %s tras %.0fs (estado=%s); se imprime "
+                    "directamente como respaldo (TCP/bridge) sin depender "
+                    "de QZ Tray.",
+                    order.name,
+                    _PDA_PRINT_ACK_TIMEOUT,
+                    ack_state,
+                )
+
+            params = action.get("params") or {}
+            fallback_report_name = params.get("printer_report_name") or params.get(
+                "report_name"
+            )
+            if fallback_report_name:
+                fallback_result = self._print_report_directly(
+                    order, pos_config, fallback_report_name, move
+                )
+                if fallback_result.get("printed"):
+                    response.update(fallback_result)
+                    response["printed"] = True
+                    return response
+                dispatch_result.setdefault(
+                    "print_error", fallback_result.get("print_error")
+                )
+
+            response.update(dispatch_result)
             return response
 
         report_name = action.get("report_name")
@@ -1472,6 +1518,133 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             "printed": True,
             "print_mode": "backend_action_bus",
             "print_delivery": "async_backend_action",
+        }
+
+    def _wait_for_pda_print_ack(self, order):
+        """Espera brevemente la confirmación (ACK) real de un navegador.
+
+        La notificación de impresión se publica en el bus de forma
+        "fire-and-forget": el backend no sabe si algún navegador la ha
+        recibido. La única confirmación fiable es el ACK que envía el
+        propio navegador (RPC ``pda_print_ack_rpc``, ver
+        ``pda_qztray_print_listener.esm.js`` /
+        ``pda_qztray_pos_listener.esm.js``), que se ejecuta en OTRA
+        petición HTTP (por tanto otra transacción/cursor).
+
+        Para que esa petición pueda ver el pedido y su estado "pending"
+        recién escritos hace falta comitear el cursor actual; sin ese
+        commit ninguna otra conexión vería el pedido hasta que termine
+        esta petición, y el ACK nunca podría llegar a tiempo. Se hace un
+        polling corto (``_PDA_PRINT_ACK_TIMEOUT`` segundos) reinvalidando
+        la caché del campo. Devuelve el estado final (``success``,
+        ``error`` o ``pending`` si se agota el tiempo sin respuesta), o
+        ``None`` si el campo no existe o el commit falla.
+        """
+        if "pda_print_ack_state" not in order._fields:
+            return None
+        try:
+            order.env.flush_all()
+            order.env.cr.commit()
+        except Exception:  # noqa: BLE001 - esperar el ACK no debe romper
+            _logger.exception(
+                "[PDA ORDER] No se pudo hacer commit antes de esperar el "
+                "ACK de impresión del pedido %s.",
+                order.name,
+            )
+            return None
+
+        deadline = time.monotonic() + _PDA_PRINT_ACK_TIMEOUT
+        state = "pending"
+        while time.monotonic() < deadline:
+            time.sleep(_PDA_PRINT_ACK_POLL_INTERVAL)
+            try:
+                order.invalidate_recordset(["pda_print_ack_state"])
+                state = order.pda_print_ack_state
+            except Exception:  # noqa: BLE001
+                break
+            if state and state != "pending":
+                break
+        return state
+
+    def _print_report_directly(self, order, pos_config, report_name, move):
+        """Renderiza ``report_name`` para ``move`` y lo imprime en directo.
+
+        Convierte el PDF del informe a una imagen ESC/POS y la envía a la
+        impresora térmica del TPV (TCP directo o bridge local). Es el
+        mismo mecanismo de respaldo que ya se usaba para acciones de tipo
+        ``ir.actions.report``, reutilizado aquí como plan B cuando la
+        acción cliente de QZ Tray no se ha podido confirmar (ningún
+        navegador la ha recibido/ejecutado a tiempo).
+        """
+        try:
+            report = (
+                order.env["ir.actions.report"]
+                .sudo()
+                ._get_report_from_name(report_name)
+            )
+            pdf_bytes, _content_type = report._render_qweb_pdf(report_name, move.ids)
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning(
+                "[PDA ORDER] No se pudo renderizar el PDF de respaldo (%s) "
+                "para el pedido %s: %s",
+                report_name,
+                order.name,
+                exc,
+            )
+            return {"printed": False, "print_error": f"PDF no generado: {exc}"}
+
+        try:
+            width_dots = self._get_printer_width_dots(pos_config)
+            raster_bytes = self._pdf_bytes_to_escpos_raster(
+                pdf_bytes, width_dots=width_dots
+            )
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning(
+                "[PDA ORDER] No se pudo convertir a imagen ESC/POS el PDF "
+                "de respaldo para el pedido %s: %s",
+                order.name,
+                exc,
+            )
+            return {
+                "printed": False,
+                "print_error": f"Conversión a ticket fallida: {exc}",
+            }
+
+        doc_name = f"Factura_{move.name or order.name}"
+        printer_cfg = self._get_direct_printer_config(pos_config)
+        last_error = None
+        if printer_cfg.get("host"):
+            tcp_result = self._print_ticket_via_socket(
+                order, printer_cfg, raw_bytes=raster_bytes
+            )
+            if tcp_result.get("printed"):
+                tcp_result["print_mode"] = "factura_simplificada_ticket_fallback"
+                _logger.info(
+                    "[PDA ORDER] Factura simplificada %s impresa "
+                    "directamente (TCP, respaldo QZ Tray) para el pedido "
+                    "%s.",
+                    move.name,
+                    order.name,
+                )
+                return tcp_result
+            last_error = tcp_result.get("print_error")
+
+        bridge_result = self._send_bridge_print(
+            order, pos_config, raw_bytes=raster_bytes, doc_name=doc_name
+        )
+        if bridge_result.get("printed"):
+            bridge_result["print_mode"] = "factura_simplificada_ticket_fallback"
+            _logger.info(
+                "[PDA ORDER] Factura simplificada %s impresa mediante el "
+                "bridge local (respaldo QZ Tray) para el pedido %s.",
+                move.name,
+                order.name,
+            )
+            return bridge_result
+
+        return {
+            "printed": False,
+            "print_error": last_error or bridge_result.get("print_error"),
         }
 
 
