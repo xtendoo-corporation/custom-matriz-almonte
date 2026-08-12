@@ -11,7 +11,7 @@
             <xpath expr="//block[@id='pos_connected_devices_section']" position="inside">
                 <setting id="pos_pda_ticket_printer"
                          string="Impresora ticket PDA (80mm térmica)"
-                         help="Impresión directa por red (ESC/POS sobre TCP) del ticket de los pedidos importados desde la PDA. Deja la IP vacía para usar el bridge local.">
+                         help="Impresión directa por red (ESC/POS sobre TCP) de la factura simplificada de los pedidos importados desde la PDA. Deja la IP vacía para usar el bridge local.">
                     <div class="content-group">
                         <div class="row mt-2">
                             <label string="IP de la impresora"
@@ -26,6 +26,13 @@
                                    class="col-lg-4 o_light_label" />
                             <field name="pos_pda_ticket_printer_port"
                                    placeholder="9100" />
+                        </div>
+                        <div class="row mt-2">
+                            <label string="Ancho impresora (dots)"
+                                   for="pos_pda_ticket_printer_width_dots"
+                                   class="col-lg-4 o_light_label" />
+                            <field name="pos_pda_ticket_printer_width_dots"
+                                   placeholder="576" />
                         </div>
                     </div>
                 </setting>

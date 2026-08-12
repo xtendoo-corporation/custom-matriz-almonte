@@ -29,4 +29,15 @@ class PosConfig(models.Model):
             "El valor estándar es 9100."
         ),
     )
+    pda_ticket_printer_width_dots = fields.Integer(
+        string="Ancho impresora (dots)",
+        default=576,
+        help=(
+            "Ancho del área imprimible de la impresora térmica, en puntos "
+            "(dots), usado al convertir la factura simplificada (PDF) en "
+            "una imagen para imprimirla directamente. "
+            "Valores habituales: 576 para impresoras de 80 mm a 203 dpi, "
+            "384 para impresoras de 58 mm a 203 dpi."
+        ),
+    )
 

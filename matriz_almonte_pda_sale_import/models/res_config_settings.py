@@ -18,4 +18,9 @@ class ResConfigSettings(models.TransientModel):
         readonly=False,
         string="Puerto impresora ticket PDA",
     )
+    pos_pda_ticket_printer_width_dots = fields.Integer(
+        related="pos_config_id.pda_ticket_printer_width_dots",
+        readonly=False,
+        string="Ancho impresora (dots)",
+    )
 

@@ -5,11 +5,19 @@ import json
 import logging
 import base64
 import socket
+import subprocess
+import tempfile
 import unicodedata
+from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 import requests as http_requests
+
+try:
+    from PIL import Image
+except ImportError:  # pragma: no cover - Pillow siempre debería estar disponible
+    Image = None
 
 from odoo import SUPERUSER_ID, fields, http
 from odoo.exceptions import UserError, ValidationError
@@ -21,6 +29,15 @@ from .pda_sale_import_controller import MatrizAlmontePdaSaleImportController
 _logger = logging.getLogger(__name__)
 
 _MAX_PAYLOAD_BYTES = 512 * 1024  # 512 KB
+
+# Ancho por defecto (en puntos/dots) del área imprimible de una impresora
+# térmica de 80 mm a 203 dpi. Es el estándar más habitual en impresoras
+# ESC/POS de 80 mm (72 mm de área imprimible ≈ 576 dots).
+_DEFAULT_PRINTER_WIDTH_DOTS = 576
+_PDF_RASTER_DPI = 203
+# Nº máximo de líneas verticales por bloque "GS v 0": trocear la imagen
+# evita problemas de buffer en impresoras térmicas con tickets largos.
+_ESCPOS_RASTER_CHUNK_LINES = 256
 
 
 def _json_response(data, status=200):
@@ -1124,20 +1141,31 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             return cls._coerce_bool(payload.get("is_printer"))
         return cls._coerce_bool(payload.get("imprimir", False))
 
-    def _print_factura_simplificada(self, order):
-        """Llama a la acción ``action_print_factura_simplificada`` del pedido.
+    def _print_factura_simplificada(self, order, pos_config):
+        """Imprime FÍSICAMENTE la factura simplificada del pedido.
 
-        Esta acción (definida en el módulo ``pos_conventional``) devuelve el
-        informe de la factura simplificada 80 mm de la ``account.move``. Aquí
-        se invoca y, a partir del informe que indica, se renderiza el PDF, se
-        guarda como adjunto del pedido y se devuelve tanto la URL del informe
-        (HTML) como el PDF en base64 para que la PDA lo abra/imprima.
+        Reproduce EXACTAMENTE lo que ocurre cuando, desde el formulario del
+        pedido, se pulsa el botón "Factura simplificada 80mm"
+        (``action_print_factura_simplificada`` del módulo
+        ``pos_conventional``):
 
-        Devuelve ``None`` si la acción no está disponible o no aplica, para
-        que ``_dispatch_order_print`` continúe con la impresión térmica.
+          1. Se invoca esa misma acción para obtener el informe QWeb de la
+             ``account.move`` asociada.
+          2. Se renderiza el PDF de ese informe (idéntico al que vería el
+             usuario) y se adjunta al pedido para dejar constancia y poder
+             reimprimirlo/reenviarlo por email más tarde.
+          3. Se convierte ese PDF en una imagen rasterizada ESC/POS y se
+             envía DIRECTAMENTE a la impresora térmica del TPV (por TCP
+             directo o por el bridge local), tal cual haría el navegador al
+             mandar el documento a la impresora predeterminada.
+
+        Devuelve un dict con ``printed`` = ``True`` solo si el ticket llegó
+        físicamente a la impresora. Si ``printed`` es ``False`` (o se
+        devuelve ``None`` porque la acción no aplica), ``_dispatch_order_print``
+        continúa con el ticket de texto plano como plan B.
         """
         try:
-            # ====== LLAMADA A LA ACCIÓN ======
+            # ====== LLAMADA A LA MISMA ACCIÓN QUE EL BOTÓN MANUAL ======
             action = order.action_print_factura_simplificada()
         except Exception as exc:  # noqa: BLE001 - la impresión no debe romper
             _logger.exception(
@@ -1162,7 +1190,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         report_url = f"/report/html/{report_name}/{move.id}"
 
         response = {
-            "printed": True,
+            "printed": False,
             "print_mode": "factura_simplificada",
             "invoice_id": move.id,
             "invoice_name": move.name,
@@ -1170,7 +1198,9 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             "report_url": report_url,
         }
 
-        # Renderizamos también el PDF (best-effort) y lo adjuntamos al pedido.
+        # Renderizamos el PDF real del informe (el mismo que genera el
+        # botón) y lo adjuntamos al pedido (best-effort).
+        pdf_bytes = None
         try:
             report = (
                 request.env["ir.actions.report"]
@@ -1210,48 +1240,207 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             )
             response["print_error"] = f"PDF no generado: {exc}"
 
-        _logger.info(
-            "[PDA ORDER] Factura simplificada impresa para el pedido %s (%s).",
+        if not pdf_bytes:
+            return response
+
+        # ====== IMPRESIÓN FÍSICA: convertir el PDF real a imagen ESC/POS
+        # y enviarla directamente a la impresora térmica del TPV ======
+        try:
+            width_dots = self._get_printer_width_dots(pos_config)
+            raster_bytes = self._pdf_bytes_to_escpos_raster(
+                pdf_bytes, width_dots=width_dots
+            )
+        except Exception as exc:  # noqa: BLE001
+            _logger.warning(
+                "[PDA ORDER] No se pudo convertir a imagen ESC/POS la factura "
+                "simplificada del pedido %s: %s",
+                order.name,
+                exc,
+            )
+            raster_bytes = None
+            response["print_error"] = f"Conversión a ticket fallida: {exc}"
+
+        if raster_bytes:
+            doc_name = f"Factura_{move.name or order.name}"
+
+            printer_cfg = self._get_direct_printer_config(pos_config)
+            tcp_error = None
+            if printer_cfg.get("host"):
+                tcp_result = self._print_ticket_via_socket(
+                    order, printer_cfg, raw_bytes=raster_bytes
+                )
+                if tcp_result.get("printed"):
+                    response.update(tcp_result)
+                    response["printed"] = True
+                    response["print_mode"] = "factura_simplificada_ticket"
+                    _logger.info(
+                        "[PDA ORDER] Factura simplificada %s impresa "
+                        "directamente (TCP) para el pedido %s.",
+                        move.name,
+                        order.name,
+                    )
+                    return response
+                tcp_error = tcp_result.get("print_error")
+
+            bridge_result = self._send_bridge_print(
+                order,
+                pos_config,
+                raw_bytes=raster_bytes,
+                doc_name=doc_name,
+            )
+            if bridge_result.get("printed"):
+                response.update(bridge_result)
+                response["printed"] = True
+                response["print_mode"] = "factura_simplificada_ticket"
+                _logger.info(
+                    "[PDA ORDER] Factura simplificada %s impresa mediante "
+                    "el bridge local para el pedido %s.",
+                    move.name,
+                    order.name,
+                )
+                return response
+
+            response["print_error"] = (
+                tcp_error
+                or bridge_result.get("print_error")
+                or response.get("print_error")
+            )
+
+        _logger.warning(
+            "[PDA ORDER] No se pudo imprimir físicamente la factura "
+            "simplificada del pedido %s; se deja disponible el PDF (%s).",
             order.name,
-            move.name,
+            response.get("print_error"),
         )
         return response
 
-    def _dispatch_order_print(self, order, pos_config):
-        # 0) Impresión de la FACTURA SIMPLIFICADA oficial (80 mm) llamando a
-        #    la acción ``action_print_factura_simplificada`` del pedido
-        #    (módulo pos_conventional). Es el método preferente cuando el
-        #    pedido ya está facturado y la acción está disponible.
-        if order.account_move and hasattr(order, "action_print_factura_simplificada"):
-            result = self._print_factura_simplificada(order)
-            if result is not None:
-                return result
+    @staticmethod
+    def _get_printer_width_dots(pos_config):
+        pos_fields = pos_config._fields
+        width = (
+            pos_config.pda_ticket_printer_width_dots
+            if "pda_ticket_printer_width_dots" in pos_fields
+            else 0
+        )
+        return int(width) or _DEFAULT_PRINTER_WIDTH_DOTS
 
-        # 1) Impresión DIRECTA en la impresora térmica de 80 mm por red
-        #    (RAW/ESC-POS sobre TCP, puerto 9100 por defecto) cuando el
-        #    TPV tiene configurada la IP de la impresora.
-        printer = self._get_direct_printer_config(pos_config)
-        direct_error = None
-        if printer.get("host"):
-            result = self._print_ticket_via_socket(order, printer)
-            if result.get("printed"):
-                return result
-            # Si la impresión directa falla se intenta el bridge local
-            # (si existe) como plan B, conservando el error original.
-            direct_error = result.get("print_error")
+    def _pdf_bytes_to_escpos_raster(
+        self, pdf_bytes, width_dots=_DEFAULT_PRINTER_WIDTH_DOTS
+    ):
+        """Convierte un PDF (bytes) en comandos ESC/POS de imagen rasterizada.
 
-        # 2) Plan B: bridge local de impresión (compatibilidad anterior).
+        Usa ``pdftoppm`` (poppler-utils) para renderizar el PDF a PNG y
+        Pillow para convertir a blanco/negro (1 bit) y generar los bytes
+        del comando ``GS v 0`` (imprimir imagen rasterizada), soportado por
+        prácticamente cualquier impresora térmica ESC/POS.
+
+        El resultado es visualmente idéntico al PDF/HTML que genera
+        ``action_print_factura_simplificada`` (el mismo botón manual):
+        NIF, QR, VERI*FACTU/TicketBAI, totales, etc. tal cual aparecen en
+        el informe oficial.
+        """
+        if Image is None:
+            raise RuntimeError("Pillow (PIL) no está disponible en el servidor.")
+
+        # Ancho múltiplo de 8 para que el empaquetado en bytes sea exacto.
+        width_dots = max(8, (int(width_dots) // 8) * 8)
+
+        with tempfile.TemporaryDirectory(prefix="pda_ticket_") as tmpdir:
+            tmp_path = Path(tmpdir)
+            pdf_path = tmp_path / "ticket.pdf"
+            pdf_path.write_bytes(pdf_bytes)
+
+            prefix = tmp_path / "page"
+            subprocess.run(
+                [
+                    "pdftoppm",
+                    "-png",
+                    "-r",
+                    str(_PDF_RASTER_DPI),
+                    str(pdf_path),
+                    str(prefix),
+                ],
+                check=True,
+                timeout=30,
+                capture_output=True,
+            )
+
+            page_files = sorted(tmp_path.glob("page*.png"))
+            if not page_files:
+                raise RuntimeError("pdftoppm no generó ninguna página del PDF.")
+
+            pages = [Image.open(str(p)).convert("L") for p in page_files]
+
+            # Concatenar todas las páginas verticalmente (un único ticket).
+            total_height = sum(p.height for p in pages)
+            max_width = max(p.width for p in pages)
+            combined = Image.new("L", (max_width, total_height), color=255)
+            y_offset = 0
+            for page in pages:
+                combined.paste(page, (0, y_offset))
+                y_offset += page.height
+
+            if combined.width != width_dots:
+                ratio = width_dots / combined.width
+                new_height = max(1, int(combined.height * ratio))
+                combined = combined.resize(
+                    (width_dots, new_height), Image.LANCZOS
+                )
+
+            bw_image = combined.convert("1", dither=Image.FLOYDSTEINBERG)
+            return self._image_to_escpos_bytes(bw_image)
+
+    @staticmethod
+    def _image_to_escpos_bytes(bw_image, chunk_lines=_ESCPOS_RASTER_CHUNK_LINES):
+        """Genera los bytes ESC/POS (comando ``GS v 0``) de una imagen 1-bit.
+
+        Se trocea en bloques de ``chunk_lines`` líneas para maximizar la
+        compatibilidad con impresoras térmicas que limitan el tamaño del
+        buffer de imagen por comando.
+        """
+        width, height = bw_image.size
+        width_bytes = width // 8  # width ya es múltiplo de 8
+
+        init = b"\x1b\x40"  # ESC @ : inicializar impresora
+        out = bytearray(init)
+
+        for start in range(0, height, chunk_lines):
+            end = min(start + chunk_lines, height)
+            chunk = bw_image.crop((0, start, width, end))
+            # PIL en modo "1": bit=1 → blanco, bit=0 → negro. ESC/POS
+            # (GS v 0) necesita justo lo contrario: bit=1 → imprime punto.
+            raw = bytes(b ^ 0xFF for b in chunk.tobytes())
+            chunk_height = end - start
+            xL, xH = width_bytes & 0xFF, (width_bytes >> 8) & 0xFF
+            yL, yH = chunk_height & 0xFF, (chunk_height >> 8) & 0xFF
+            out += bytes([0x1D, 0x76, 0x30, 0x00, xL, xH, yL, yH])
+            out += raw
+
+        out += b"\n\n\n\n"
+        out += b"\x1d\x56\x41\x10"  # GS V A 16 : corte parcial con avance
+        return bytes(out)
+
+    def _send_bridge_print(self, order, pos_config, raw_bytes=None, doc_name=None):
+        """Envía bytes RAW ESC/POS al bridge local (``/print-raw``).
+
+        Si no se indica ``raw_bytes`` explícitamente, construye el ticket
+        de texto plano genérico (comportamiento histórico) a partir del
+        pedido, para mantener compatibilidad como último recurso.
+        """
         bridge_config = self._get_print_bridge_config(pos_config)
         if bridge_config.get("error"):
-            return {
-                "printed": False,
-                "print_error": direct_error or bridge_config["error"],
-            }
+            return {"printed": False, "print_error": bridge_config["error"]}
+
+        hex_bytes = (
+            ",".join(f"{byte:02X}" for byte in raw_bytes)
+            if raw_bytes is not None
+            else self._build_ticket_hex_bytes(order)
+        )
 
         payload = {
             "printer": bridge_config["printer_name"],
-            "hex_bytes": self._build_ticket_hex_bytes(order),
-            "doc_name": f"PDA_POS_{order.name or order.id}",
+            "hex_bytes": hex_bytes,
+            "doc_name": doc_name or f"PDA_POS_{order.name or order.id}",
         }
         headers = {}
         if bridge_config["api_key"]:
@@ -1310,6 +1499,53 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             "print_error": last_error,
         }
 
+    def _dispatch_order_print(self, order, pos_config):
+        # 0) Impresión FÍSICA de la FACTURA SIMPLIFICADA oficial (80 mm)
+        #    llamando a la MISMA acción que el botón manual del formulario
+        #    (``action_print_factura_simplificada``, módulo pos_conventional)
+        #    y enviando ese documento real, convertido a imagen ESC/POS,
+        #    directamente a la impresora térmica del TPV.
+        extra_info = {}
+        if order.account_move and hasattr(order, "action_print_factura_simplificada"):
+            result = self._print_factura_simplificada(order, pos_config)
+            if result is not None:
+                if result.get("printed"):
+                    return result
+                # No se pudo imprimir físicamente el documento real (p.ej.
+                # no hay impresora/bridge configurado, o falló la
+                # conversión a imagen): conservamos la info (PDF adjunto,
+                # URL, error) y probamos el ticket de texto plano como
+                # plan B antes de rendirnos.
+                extra_info = result
+
+        # 1) Impresión DIRECTA en la impresora térmica de 80 mm por red
+        #    (RAW/ESC-POS sobre TCP, puerto 9100 por defecto) cuando el
+        #    TPV tiene configurada la IP de la impresora.
+        printer = self._get_direct_printer_config(pos_config)
+        direct_error = None
+        if printer.get("host"):
+            result = self._print_ticket_via_socket(order, printer)
+            if result.get("printed"):
+                return {**extra_info, **result}
+            # Si la impresión directa falla se intenta el bridge local
+            # (si existe) como plan B, conservando el error original.
+            direct_error = result.get("print_error")
+
+        # 2) Plan B: bridge local de impresión (ticket de texto genérico).
+        bridge_result = self._send_bridge_print(order, pos_config)
+        if bridge_result.get("printed"):
+            return {**extra_info, **bridge_result}
+
+        return {
+            **extra_info,
+            "printed": False,
+            "print_error": (
+                direct_error
+                or bridge_result.get("print_error")
+                or extra_info.get("print_error")
+            ),
+        }
+
     @staticmethod
     def _get_direct_printer_config(pos_config):
         """Devuelve la configuración de la impresora térmica directa del TPV."""
@@ -1326,15 +1562,20 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         ) or 9100
         return {"host": host, "port": int(port)}
 
-    def _print_ticket_via_socket(self, order, printer):
+    def _print_ticket_via_socket(self, order, printer, raw_bytes=None):
         """Imprime el ticket enviando los bytes ESC/POS directamente por TCP.
 
         Es el método de impresión directo para impresoras térmicas de
         80 mm conectadas por red (RAW/JetDirect, normalmente puerto 9100).
+
+        Si no se indica ``raw_bytes`` explícitamente (p.ej. la imagen ESC/POS
+        de la factura simplificada real), se construye el ticket de texto
+        plano genérico a partir del pedido, como hasta ahora.
         """
         host = printer["host"]
         port = printer.get("port") or 9100
-        raw_bytes = self._build_ticket_bytes(order)
+        if raw_bytes is None:
+            raw_bytes = self._build_ticket_bytes(order)
         try:
             with socket.create_connection((host, port), timeout=10) as sock:
                 sock.sendall(raw_bytes)
