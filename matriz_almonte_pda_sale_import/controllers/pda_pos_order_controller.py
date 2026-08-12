@@ -1165,6 +1165,40 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         continúa con el ticket de texto plano como plan B.
         """
         try:
+            # La factura se acaba de generar dentro de esta misma petición.
+            # Refrescamos/recuperamos explícitamente el enlace porque el valor
+            # vacío de ``account_move`` puede permanecer cacheado en el
+            # recordset, haciendo que el método del botón devuelva ``None``.
+            if hasattr(order, "matriz_almonte_ensure_account_move"):
+                move = order.matriz_almonte_ensure_account_move()
+            else:
+                order.flush_recordset()
+                order.invalidate_recordset(["account_move"])
+                move = order.account_move
+            if not move:
+                error = (
+                    "El pedido está integrado pero no tiene una factura "
+                    "simplificada enlazada (account_move vacío)."
+                )
+                _logger.error(
+                    "[PDA ORDER] %s Pedido %s (id=%s, estado=%s, "
+                    "to_invoice=%s).",
+                    error,
+                    order.name,
+                    order.id,
+                    order.state,
+                    order.to_invoice,
+                )
+                return {"printed": False, "print_error": error}
+
+            _logger.info(
+                "[PDA ORDER] Factura enlazada confirmada antes de imprimir: "
+                "pedido=%s (id=%s), factura=%s (id=%s).",
+                order.name,
+                order.id,
+                move.name,
+                move.id,
+            )
             # ====== LLAMADA A LA MISMA ACCIÓN QUE EL BOTÓN MANUAL ======
             action = order.action_print_factura_simplificada()
         except Exception as exc:  # noqa: BLE001 - la impresión no debe romper
@@ -1179,13 +1213,14 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         if not action or action.get("type") != "ir.actions.report":
             _logger.warning(
                 "[PDA ORDER] action_print_factura_simplificada no devolvió un "
-                "informe para el pedido %s.",
+                "informe para el pedido %s. Acción devuelta: %r; factura: %s.",
                 order.name,
+                action,
+                move.display_name,
             )
             return None
 
         report_name = action.get("report_name")
-        move = order.account_move
         # URL del informe HTML (mismo patrón que usa pos_conventional).
         report_url = f"/report/html/{report_name}/{move.id}"
 
@@ -1203,14 +1238,14 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         pdf_bytes = None
         try:
             report = (
-                request.env["ir.actions.report"]
+                order.env["ir.actions.report"]
                 .sudo()
                 ._get_report_from_name(report_name)
             )
             pdf_bytes, _content_type = report._render_qweb_pdf(report_name, move.ids)
             pdf_b64 = base64.b64encode(pdf_bytes).decode("ascii")
             attachment = (
-                request.env["ir.attachment"]
+                order.env["ir.attachment"]
                 .sudo()
                 .create(
                     {
@@ -1600,11 +1635,12 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
     def _dispatch_order_print(self, order, pos_config):
         # 0) Impresión FÍSICA de la FACTURA SIMPLIFICADA oficial (80 mm)
         #    llamando a la MISMA acción que el botón manual del formulario
-        #    (``action_print_factura_simplificada``, módulo pos_conventional)
-        #    y enviando ese documento real, convertido a imagen ESC/POS,
-        #    directamente a la impresora térmica del TPV.
+        #    (``action_print_factura_simplificada``, módulo pos_conventional).
+        #    No comprobamos ``order.account_move`` aquí: puede estar vacío en
+        #    la caché justo después de crear la factura. El método llamado se
+        #    encarga de refrescar y recuperar el enlace de forma segura.
         extra_info = {}
-        if order.account_move and hasattr(order, "action_print_factura_simplificada"):
+        if hasattr(order, "action_print_factura_simplificada"):
             result = self._print_factura_simplificada(order, pos_config)
             if result is not None:
                 if result.get("printed"):

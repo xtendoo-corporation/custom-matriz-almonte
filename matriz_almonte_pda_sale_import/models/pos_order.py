@@ -106,6 +106,32 @@ class PosOrder(models.Model):
         )
         return True
 
+    def matriz_almonte_ensure_account_move(self):
+        """Devuelve y, si es necesario, recupera la factura del pedido.
+
+        ``account_move`` puede haberse leído como vacío antes de llamar a
+        ``_generate_pos_order_invoice``. La factura se crea enlazando
+        ``account.move.pos_order_ids``, pero el valor vacío puede permanecer
+        en la caché del recordset durante la misma petición HTTP. Eso hacía
+        que ``action_print_factura_simplificada`` devolviera ``None`` justo
+        después de integrar el pedido, aunque la factura sí existiera.
+        """
+        self.ensure_one()
+        self.flush_recordset()
+        self.invalidate_recordset(["account_move"])
+        move = self.account_move
+        if not move:
+            move = self.env["account.move"].sudo().search(
+                [("pos_order_ids", "in", self.id)],
+                order="id desc",
+                limit=1,
+            )
+            if move:
+                self.sudo().write({"account_move": move.id})
+                self.invalidate_recordset(["account_move"])
+                move = self.account_move
+        return move
+
 
     def _force_create_picking_real_time(self):
         """Fuerza la creación del albarán en el momento de la importación.
@@ -149,10 +175,11 @@ class PosOrder(models.Model):
         )._create_order_picking()
 
         # Factura simplificada.
-        if self.account_move:
+        move = self.matriz_almonte_ensure_account_move()
+        if move:
             if not self.pda_simplified_invoice_number:
-                self.pda_simplified_invoice_number = self.account_move.name
-            return self.account_move
+                self.pda_simplified_invoice_number = move.name
+            return move
 
         if not self.config_id.invoice_journal_id:
             raise UserError(
@@ -174,18 +201,33 @@ class PosOrder(models.Model):
             )
 
         self.write({"to_invoice": True})
-        self.with_context(generate_pdf=False)._generate_pos_order_invoice()
+        move = self.with_context(generate_pdf=False)._generate_pos_order_invoice()
+        # Aunque la creación de account.move con ``pos_order_ids`` debería
+        # establecer el inverso ``account_move``, lo escribimos explícitamente
+        # para que quede disponible en esta misma transacción y recordset.
+        if move and self.account_move != move:
+            self.sudo().write({"account_move": move.id})
+        self.flush_recordset(["account_move"])
+        self.invalidate_recordset(["account_move"])
+        move = self.matriz_almonte_ensure_account_move()
+        if not move:
+            raise UserError(
+                _(
+                    "Se creó la factura del pedido %(name)s, pero no se pudo "
+                    "enlazar con el pedido POS.",
+                    name=self.name,
+                )
+            )
         # Guardamos el número de la factura simplificada en el pedido para
         # poder identificarla/reimprimirla sin depender de recomputar el
         # enlace ``account_move``.
-        if self.account_move:
-            self.pda_simplified_invoice_number = self.account_move.name
+        self.pda_simplified_invoice_number = move.name
         _logger.info(
             "PDA Import: pedido %s facturado como %s %s",
             self.name,
             "factura rectificativa"
-            if self.account_move.move_type == "out_refund"
+            if move.move_type == "out_refund"
             else "factura simplificada",
-            self.account_move.name,
+            move.name,
         )
-        return self.account_move
+        return move
