@@ -184,17 +184,24 @@ export const pdaAutoPrintService = {
         // cliente con tag ``pos_conventional_print_receipt_qztray_window``.
         // Esa acción debe ejecutarse directamente: es quien conecta con QZ
         // Tray y envía el ticket original a la impresora.
-        let printAction;
+        let printAction = payload.print_action || null;
         try {
-            diagnosticLog("info", "EJECUTANDO EL MÉTODO DEL BOTÓN MANUAL", [
-                `Pedido: ${orderLabel}`,
-                "Método: pos.order.action_print_factura_simplificada",
-            ]);
-            printAction = await orm.call(
-                "pos.order",
-                "action_print_factura_simplificada",
-                [[payload.order_id]]
-            );
+            if (printAction) {
+                diagnosticLog("info", "USANDO ACCIÓN INCLUIDA EN EL BUS", [
+                    `Pedido: ${orderLabel}`,
+                    printAction,
+                ]);
+            } else {
+                diagnosticLog("info", "EJECUTANDO EL MÉTODO DEL BOTÓN MANUAL", [
+                    `Pedido: ${orderLabel}`,
+                    "Método: pos.order.action_print_factura_simplificada",
+                ]);
+                printAction = await orm.call(
+                    "pos.order",
+                    "action_print_factura_simplificada",
+                    [[payload.order_id]]
+                );
+            }
             diagnosticLog("info", "ACCIÓN DE IMPRESIÓN RECIBIDA", [
                 `Tipo: ${printAction?.type || "SIN TIPO"}`,
                 `Tag: ${printAction?.tag || "SIN TAG"}`,

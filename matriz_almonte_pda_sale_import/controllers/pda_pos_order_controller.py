@@ -1246,7 +1246,9 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 action.get("tag"),
                 action.get("params"),
             )
-            dispatch_result = self._send_qztray_print(order, pos_config)
+            dispatch_result = self._send_qztray_print(
+                order, pos_config, print_action=action
+            )
             response.update(dispatch_result)
             if dispatch_result.get("printed"):
                 response["print_mode"] = "factura_simplificada_qztray_client_action"
@@ -1396,7 +1398,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         )
         return response
 
-    def _send_qztray_print(self, order, pos_config):
+    def _send_qztray_print(self, order, pos_config, print_action=None):
         """Notifica por el BUS de Odoo que hay que reproducir el click
         manual del botón "Factura simplificada 80mm" para este pedido.
 
@@ -1440,6 +1442,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 {
                     "order_id": order.id,
                     "order_name": order.name,
+                    "print_action": print_action or False,
                 },
             )
         except Exception as exc:  # noqa: BLE001 - la impresión no debe romper
