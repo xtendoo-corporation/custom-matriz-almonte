@@ -2,6 +2,18 @@
 
 import { registry } from "@web/core/registry";
 
+const DIAGNOSTIC_SEPARATOR = "*".repeat(80);
+
+function diagnosticLog(level, title, details = []) {
+    const logger = console[level] || console.log;
+    logger.call(console, DIAGNOSTIC_SEPARATOR);
+    logger.call(console, `[PDA][AutoPrint] ${title}`);
+    for (const detail of details) {
+        logger.call(console, detail);
+    }
+    logger.call(console, DIAGNOSTIC_SEPARATOR);
+}
+
 /**
  * Servicio de impresión automática para pedidos importados desde la PDA.
  * ------------------------------------------------------------------------
@@ -58,6 +70,9 @@ import { registry } from "@web/core/registry";
 function fallbackPrintIframe(url) {
     return new Promise((resolve, reject) => {
         try {
+            diagnosticLog("info", "CREANDO IFRAME OCULTO DE IMPRESIÓN", [
+                `URL: ${url}`,
+            ]);
             const iframe = document.createElement("iframe");
             iframe.style.position = "fixed";
             iframe.style.right = "0";
@@ -69,10 +84,16 @@ function fallbackPrintIframe(url) {
             iframe.style.pointerEvents = "none";
             iframe.src = url;
             iframe.onload = () => {
+                diagnosticLog("info", "IFRAME CARGADO; PREPARANDO window.print()", [
+                    `URL cargada: ${url}`,
+                ]);
                 setTimeout(() => {
                     try {
                         iframe.contentWindow.focus();
                         iframe.contentWindow.print();
+                        diagnosticLog("info", "window.print() EJECUTADO", [
+                            "La orden de impresión se ha enviado desde el iframe.",
+                        ]);
                         setTimeout(() => {
                             try {
                                 iframe.remove();
@@ -82,6 +103,7 @@ function fallbackPrintIframe(url) {
                             resolve(true);
                         }, 500);
                     } catch (e) {
+                        diagnosticLog("error", "ERROR EJECUTANDO window.print()", [e]);
                         try {
                             iframe.remove();
                         } catch {
@@ -92,6 +114,7 @@ function fallbackPrintIframe(url) {
                 }, 50);
             };
             iframe.onerror = (err) => {
+                diagnosticLog("error", "ERROR CARGANDO EL IFRAME", [err]);
                 try {
                     iframe.remove();
                 } catch {
@@ -101,6 +124,7 @@ function fallbackPrintIframe(url) {
             };
             document.body.appendChild(iframe);
         } catch (e) {
+            diagnosticLog("error", "ERROR CREANDO EL IFRAME", [e]);
             reject(e);
         }
     });
@@ -123,10 +147,10 @@ export const pdaAutoPrintService = {
                 ["access_token", "name"]
             );
         } catch (error) {
-            console.error(
-                "[PDA][AutoPrint] No se pudieron leer los pos.config para " +
-                    "suscribirse a la impresión automática:",
-                error
+            diagnosticLog(
+                "error",
+                "ERROR LEYENDO LOS PUNTOS DE VENTA PARA SUSCRIBIR EL LISTENER",
+                [error]
             );
             return;
         }
@@ -142,12 +166,13 @@ export const pdaAutoPrintService = {
             );
         }
 
-        // eslint-disable-next-line no-console
-        console.info(
-            "%c[PDA][AutoPrint] Servicio de impresión automática REGISTRADO " +
-                `para ${configs.length} punto(s) de venta.`,
-            "color: #28ffeb; font-weight: bold;"
-        );
+        diagnosticLog("info", "SERVICIO DE IMPRESIÓN AUTOMÁTICA REGISTRADO", [
+            `Puntos de venta suscritos: ${configs.length}`,
+            ...configs.map(
+                (config) =>
+                    `POS: ${config.name} | canal: ${config.access_token || "SIN TOKEN"}`
+            ),
+        ]);
     },
 
     async _onPdaPrintTicket(payload, orm, action) {
@@ -155,13 +180,19 @@ export const pdaAutoPrintService = {
             return;
         }
         const orderLabel = payload.order_name || payload.order_id;
-        console.info(
-            `[PDA][AutoPrint] Notificación recibida: imprimir pedido ${orderLabel}.`
-        );
+        diagnosticLog("info", "NOTIFICACIÓN DE IMPRESIÓN RECIBIDA", [
+            `Pedido: ${orderLabel}`,
+            `ID: ${payload.order_id}`,
+            payload,
+        ]);
 
         // ====== MÉTODO 1: EXACTAMENTE igual que el botón manual ======
         // get_factura_report_url() + iframe oculto + window.print().
         try {
+            diagnosticLog("info", "SOLICITANDO URL DEL INFORME", [
+                `Pedido: ${orderLabel}`,
+                "Método: pos.order.get_factura_report_url",
+            ]);
             const url = await orm.call("pos.order", "get_factura_report_url", [
                 [payload.order_id],
             ]);
@@ -171,30 +202,41 @@ export const pdaAutoPrintService = {
                     registry.category("utils").get("pos_print_iframe", null) ||
                     fallbackPrintIframe;
 
+                diagnosticLog("info", "URL DEL INFORME OBTENIDA", [
+                    `URL relativa: ${url}`,
+                    `URL absoluta: ${absoluteUrl}`,
+                    `Función de impresión: ${
+                        printIframeFn === fallbackPrintIframe
+                            ? "fallbackPrintIframe local"
+                            : "pos_print_iframe de pos_conventional"
+                    }`,
+                ]);
+
                 await printIframeFn(`${absoluteUrl}?download=false`);
-                console.info(
-                    `[PDA][AutoPrint] Ticket del pedido ${orderLabel} enviado a ` +
-                        "imprimir vía iframe (igual que el botón manual)."
-                );
+                diagnosticLog("info", "IMPRESIÓN VÍA IFRAME FINALIZADA", [
+                    `Pedido: ${orderLabel}`,
+                    "Se enviará ACK de éxito al servidor.",
+                ]);
                 await this._ackPrint(orm, payload.order_id, true, "", "iframe_print");
                 return;
             }
-            console.warn(
-                `[PDA][AutoPrint] get_factura_report_url no devolvió URL para ` +
-                    `el pedido ${orderLabel}; probando plan B (doAction).`
-            );
+            diagnosticLog("warn", "EL MÉTODO NO DEVOLVIÓ URL; ACTIVANDO PLAN B", [
+                `Pedido: ${orderLabel}`,
+            ]);
         } catch (error) {
-            console.error(
-                `[PDA][AutoPrint] Error imprimiendo (iframe) el pedido ` +
-                    `${orderLabel}, probando plan B (doAction):`,
-                error
-            );
+            diagnosticLog("error", "ERROR EN IMPRESIÓN VÍA IFRAME; ACTIVANDO PLAN B", [
+                `Pedido: ${orderLabel}`,
+                error,
+            ]);
         }
 
         // ====== MÉTODO 2 (plan B): doAction() sobre la acción de informe.
         // Puede no disparar impresión silenciosa (solo abrir/descargar el
         // PDF), pero al menos deja el documento accesible al usuario. ===
         try {
+            diagnosticLog("warn", "EJECUTANDO PLAN B CON action.doAction()", [
+                `Pedido: ${orderLabel}`,
+            ]);
             const reportAction = await orm.call(
                 "pos.order",
                 "action_print_factura_simplificada",
@@ -212,10 +254,10 @@ export const pdaAutoPrintService = {
                 return;
             }
             await action.doAction(reportAction);
-            console.info(
-                `[PDA][AutoPrint] (Plan B) Acción de impresión ejecutada para ` +
-                    `el pedido ${orderLabel}.`
-            );
+            diagnosticLog("warn", "PLAN B EJECUTADO", [
+                `Pedido: ${orderLabel}`,
+                reportAction,
+            ]);
             await this._ackPrint(
                 orm,
                 payload.order_id,
@@ -225,17 +267,22 @@ export const pdaAutoPrintService = {
             );
         } catch (error) {
             const msg = error?.message?.message || error?.message || String(error);
-            console.error(
-                `[PDA][AutoPrint] Error imprimiendo (plan B) el pedido ` +
-                    `${orderLabel}:`,
-                error
-            );
+            diagnosticLog("error", "ERROR TAMBIÉN EN EL PLAN B", [
+                `Pedido: ${orderLabel}`,
+                error,
+            ]);
             await this._ackPrint(orm, payload.order_id, false, msg, "doaction_fallback");
         }
     },
 
     async _ackPrint(orm, orderId, success, message, stage) {
         try {
+            diagnosticLog("info", "ENVIANDO ACK DE IMPRESIÓN AL SERVIDOR", [
+                `Pedido ID: ${orderId}`,
+                `Resultado: ${success ? "SUCCESS" : "ERROR"}`,
+                `Etapa: ${stage || "print"}`,
+                `Mensaje: ${message || "(vacío)"}`,
+            ]);
             await orm.call("pos.order", "pda_print_ack_rpc", [
                 [orderId],
                 success,
@@ -243,7 +290,7 @@ export const pdaAutoPrintService = {
                 stage || "print",
             ]);
         } catch (ackError) {
-            console.error("[PDA][AutoPrint] No se pudo enviar el ACK:", ackError);
+            diagnosticLog("error", "ERROR ENVIANDO EL ACK AL SERVIDOR", [ackError]);
         }
     },
 };
