@@ -1210,28 +1210,52 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             )
             return {"printed": False, "print_error": str(exc)}
 
-        if not action or action.get("type") != "ir.actions.report":
+        action_type = action.get("type") if action else None
+        if action_type not in {"ir.actions.report", "ir.actions.client"}:
             _logger.warning(
                 "[PDA ORDER] action_print_factura_simplificada no devolvió un "
-                "informe para el pedido %s. Acción devuelta: %r; factura: %s.",
+                "informe ni una acción cliente imprimible para el pedido %s. "
+                "Acción devuelta: %r; factura: %s.",
                 order.name,
                 action,
                 move.display_name,
             )
             return None
 
-        report_name = action.get("report_name")
-        # URL del informe HTML (mismo patrón que usa pos_conventional).
-        report_url = f"/report/html/{report_name}/{move.id}"
-
         response = {
             "printed": False,
             "print_mode": "factura_simplificada",
             "invoice_id": move.id,
             "invoice_name": move.name,
-            "report_name": report_name,
-            "report_url": report_url,
+            "print_action_type": action_type,
+            "print_action_tag": action.get("tag") or False,
         }
+
+        # En producción ``pos_conventional_qztray`` devuelve exactamente:
+        #   {type: "ir.actions.client",
+        #    tag: "pos_conventional_print_receipt_qztray_window", ...}
+        # Esa es la acción directa y oficial que usa el botón manual para
+        # imprimir mediante QZ Tray. No debe tratarse como informe ni
+        # renderizarse en el servidor: se publica inmediatamente para que el
+        # navegador ejecute su tag con ``action.doAction()``.
+        if action_type == "ir.actions.client":
+            _logger.info(
+                "[PDA ORDER] Acción cliente de impresión directa detectada "
+                "para el pedido %s: tag=%s, params=%s.",
+                order.name,
+                action.get("tag"),
+                action.get("params"),
+            )
+            dispatch_result = self._send_qztray_print(order, pos_config)
+            response.update(dispatch_result)
+            if dispatch_result.get("printed"):
+                response["print_mode"] = "factura_simplificada_qztray_client_action"
+            return response
+
+        report_name = action.get("report_name")
+        # URL del informe HTML (mismo patrón que usa pos_conventional).
+        report_url = f"/report/html/{report_name}/{move.id}"
+        response.update({"report_name": report_name, "report_url": report_url})
 
         # Renderizamos el PDF real del informe (el mismo que genera el
         # botón) y lo adjuntamos al pedido (best-effort).

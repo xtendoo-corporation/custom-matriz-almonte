@@ -25,21 +25,14 @@ function diagnosticLog(level, title, details = []) {
  * ocurre al pulsar el botón manual "Factura simplificada 80mm" del
  * formulario del pedido.
  *
- * IMPORTANTE (lección aprendida): ese botón NO usa el flujo estándar de
- * Odoo para acciones de informe (``doAction`` de un ``ir.actions.report``
- * normal). El módulo ``pos_conventional`` INTERCEPTA el click
- * (``pos_order_form_barcode_controller.js``) y en su lugar:
- *   1. Pide por RPC la URL HTML del informe (``get_factura_report_url``).
- *   2. Carga esa URL en un <iframe> oculto y llama a
- *      ``iframe.contentWindow.print()`` (``pos_print_iframe.js``, función
- *      registrada como ``registry.category("utils").get("pos_print_iframe")``).
- * Es ESE ``window.print()`` sobre el iframe el que, en el PC de la
- * tienda, acaba imprimiendo directamente (vía QZ Tray configurado como
- * impresora del sistema, o cualquier mecanismo de impresión silenciosa
- * que tengan configurado en el navegador/SO) — no una intercepción de
- * ``ir.actions.report`` a nivel de Odoo. Por eso disparar la acción con
- * ``doAction()`` NO reproducía el mismo comportamiento (como mucho abre o
- * descarga el PDF, pero no imprime directamente).
+ * En producción el módulo ``pos_conventional_qztray`` hace que el método
+ * del botón devuelva una acción cliente específica:
+ * ``pos_conventional_print_receipt_qztray_window``. Esa acción es quien
+ * prepara el recibo original y lo envía a QZ Tray, por lo que debe
+ * ejecutarse con ``action.doAction()`` sin transformarla en informe ni
+ * iframe. Algunas instalaciones sin esa extensión devuelven en cambio un
+ * ``ir.actions.report``; para ellas se conserva el flujo histórico de
+ * URL HTML + iframe oculto + ``window.print()``.
  *
  * Este servicio reproduce EXACTAMENTE esos mismos dos pasos, disparados
  * por una notificación del bus en lugar de por un click:
@@ -50,9 +43,9 @@ function diagnosticLog(level, title, details = []) {
  *   2. Este servicio (cargado en el backend general, ``web.assets_backend``
  *      — el mismo contexto donde vive el botón manual) recibe la
  *      notificación.
- *   3. Pide la URL del informe y la imprime vía iframe oculto, igual que
- *      el botón. Si por lo que sea la función de ``pos_conventional`` no
- *      está disponible, cae a ``doAction()`` como plan B.
+ *   3. Invoca ``action_print_factura_simplificada`` y ejecuta exactamente
+ *      la acción devuelta: acción cliente QZ Tray en producción, o iframe
+ *      para acciones de informe en instalaciones compatibles.
  *
  * IMPORTANTE: requiere que haya una sesión de Odoo (backend) abierta en
  * un navegador del PC de la tienda. Cada intento se confirma (ACK) al
@@ -186,10 +179,104 @@ export const pdaAutoPrintService = {
             payload,
         ]);
 
-        // ====== MÉTODO 1: EXACTAMENTE igual que el botón manual ======
-        // get_factura_report_url() + iframe oculto + window.print().
+        // ====== PASO 1: invocar EXACTAMENTE el método del botón manual. ====
+        // En producción ``pos_conventional_qztray`` devuelve una acción
+        // cliente con tag ``pos_conventional_print_receipt_qztray_window``.
+        // Esa acción debe ejecutarse directamente: es quien conecta con QZ
+        // Tray y envía el ticket original a la impresora.
+        let printAction;
         try {
-            diagnosticLog("info", "SOLICITANDO URL DEL INFORME", [
+            diagnosticLog("info", "EJECUTANDO EL MÉTODO DEL BOTÓN MANUAL", [
+                `Pedido: ${orderLabel}`,
+                "Método: pos.order.action_print_factura_simplificada",
+            ]);
+            printAction = await orm.call(
+                "pos.order",
+                "action_print_factura_simplificada",
+                [[payload.order_id]]
+            );
+            diagnosticLog("info", "ACCIÓN DE IMPRESIÓN RECIBIDA", [
+                `Tipo: ${printAction?.type || "SIN TIPO"}`,
+                `Tag: ${printAction?.tag || "SIN TAG"}`,
+                printAction,
+            ]);
+        } catch (error) {
+            const msg = error?.message?.message || error?.message || String(error);
+            diagnosticLog("error", "ERROR EJECUTANDO EL MÉTODO DEL BOTÓN", [
+                `Pedido: ${orderLabel}`,
+                error,
+            ]);
+            await this._ackPrint(orm, payload.order_id, false, msg, "button_method");
+            return;
+        }
+
+        if (!printAction) {
+            await this._ackPrint(
+                orm,
+                payload.order_id,
+                false,
+                "action_print_factura_simplificada no devolvió ninguna acción.",
+                "button_method"
+            );
+            return;
+        }
+
+        if (printAction.type === "ir.actions.client") {
+            try {
+                diagnosticLog("info", "EJECUTANDO ACCIÓN CLIENTE QZ TRAY", [
+                    `Pedido: ${orderLabel}`,
+                    `Tag: ${printAction.tag}`,
+                    printAction.params || {},
+                ]);
+                await action.doAction(printAction);
+                diagnosticLog("info", "ACCIÓN CLIENTE QZ TRAY FINALIZADA", [
+                    `Pedido: ${orderLabel}`,
+                    `Tag: ${printAction.tag}`,
+                    "Se enviará ACK de éxito al servidor.",
+                ]);
+                await this._ackPrint(
+                    orm,
+                    payload.order_id,
+                    true,
+                    `Acción cliente ejecutada: ${printAction.tag}`,
+                    "qztray_client_action"
+                );
+            } catch (error) {
+                const msg = error?.message?.message || error?.message || String(error);
+                diagnosticLog("error", "ERROR EJECUTANDO LA ACCIÓN CLIENTE QZ TRAY", [
+                    `Pedido: ${orderLabel}`,
+                    `Tag: ${printAction.tag}`,
+                    error,
+                ]);
+                await this._ackPrint(
+                    orm,
+                    payload.order_id,
+                    false,
+                    msg,
+                    "qztray_client_action"
+                );
+            }
+            return;
+        }
+
+        if (printAction.type !== "ir.actions.report") {
+            const msg = `Tipo de acción no imprimible: ${printAction.type || "vacío"}`;
+            diagnosticLog("error", "TIPO DE ACCIÓN NO SOPORTADO", [msg, printAction]);
+            await this._ackPrint(
+                orm,
+                payload.order_id,
+                false,
+                msg,
+                "unsupported_action"
+            );
+            return;
+        }
+
+        // ====== COMPATIBILIDAD: algunas instalaciones devuelven un informe.
+        // En ese caso reproducimos el mecanismo histórico de pos_conventional:
+        // get_factura_report_url() + iframe oculto + window.print(). ======
+        try {
+            diagnosticLog("info", "ACCIÓN DE INFORME: SOLICITANDO URL HTML", [
                 `Pedido: ${orderLabel}`,
                 "Método: pos.order.get_factura_report_url",
             ]);
@@ -220,43 +307,27 @@ export const pdaAutoPrintService = {
                 await this._ackPrint(orm, payload.order_id, true, "", "iframe_print");
                 return;
             }
-            diagnosticLog("warn", "EL MÉTODO NO DEVOLVIÓ URL; ACTIVANDO PLAN B", [
+            diagnosticLog("warn", "EL MÉTODO NO DEVOLVIÓ URL; EJECUTANDO INFORME", [
                 `Pedido: ${orderLabel}`,
             ]);
         } catch (error) {
-            diagnosticLog("error", "ERROR EN IMPRESIÓN VÍA IFRAME; ACTIVANDO PLAN B", [
+            diagnosticLog("error", "ERROR EN IMPRESIÓN VÍA IFRAME; EJECUTANDO INFORME", [
                 `Pedido: ${orderLabel}`,
                 error,
             ]);
         }
 
-        // ====== MÉTODO 2 (plan B): doAction() sobre la acción de informe.
+        // ====== Plan B solo para acciones de informe: doAction().
         // Puede no disparar impresión silenciosa (solo abrir/descargar el
         // PDF), pero al menos deja el documento accesible al usuario. ===
         try {
-            diagnosticLog("warn", "EJECUTANDO PLAN B CON action.doAction()", [
+            diagnosticLog("warn", "EJECUTANDO ACCIÓN DE INFORME COMO PLAN B", [
                 `Pedido: ${orderLabel}`,
             ]);
-            const reportAction = await orm.call(
-                "pos.order",
-                "action_print_factura_simplificada",
-                [[payload.order_id]]
-            );
-            if (!reportAction) {
-                await this._ackPrint(
-                    orm,
-                    payload.order_id,
-                    false,
-                    "Ni el iframe ni action_print_factura_simplificada " +
-                        "devolvieron un resultado utilizable.",
-                    "doaction_fallback"
-                );
-                return;
-            }
-            await action.doAction(reportAction);
+            await action.doAction(printAction);
             diagnosticLog("warn", "PLAN B EJECUTADO", [
                 `Pedido: ${orderLabel}`,
-                reportAction,
+                printAction,
             ]);
             await this._ackPrint(
                 orm,
