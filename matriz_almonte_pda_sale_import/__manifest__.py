@@ -25,6 +25,7 @@
     "assets": {
         "web.assets_backend": [
             "matriz_almonte_pda_sale_import/static/src/app/pda_qztray_print_listener.esm.js",
+            "matriz_almonte_pda_sale_import/static/src/app/pda_new_order_list_refresh.esm.js",
         ],
         "point_of_sale._assets_pos": [
             "matriz_almonte_pda_sale_import/static/src/app/pda_qztray_pos_listener.esm.js",

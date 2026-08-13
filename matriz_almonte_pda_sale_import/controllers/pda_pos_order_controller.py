@@ -451,6 +451,19 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             _logger.info(f"   - Usuario: {order.user_id.name} (ID: {order.user_id.id})")
             _logger.info(f"   - Estado: {order.state}")
             _logger.info("=" * 80)
+            # Avisa por el bus a quien tenga abierta la lista de pedidos del
+            # TPV en el backend, para que se refresque sola y muestre este
+            # pedido sin necesidad de recargar la página manualmente.
+            try:
+                pos_config._notify(
+                    "PDA_NEW_ORDER", {"order_id": order.id, "order_name": order.name}
+                )
+            except Exception:  # noqa: BLE001 - un fallo aquí no debe romper la venta
+                _logger.exception(
+                    "[PDA ORDER] Error publicando notificación de pedido nuevo "
+                    "en el bus para el pedido %s.",
+                    order.name,
+                )
         except (ValidationError, UserError) as exc:
             _logger.error(f"❌ [PDA ORDER] Error al crear pedido: {str(exc)}")
             _logger.info("=" * 80)
