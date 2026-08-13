@@ -7,7 +7,6 @@ import base64
 import socket
 import subprocess
 import tempfile
-import time
 import unicodedata
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -39,14 +38,6 @@ _PDF_RASTER_DPI = 203
 # Nº máximo de líneas verticales por bloque "GS v 0": trocear la imagen
 # evita problemas de buffer en impresoras térmicas con tickets largos.
 _ESCPOS_RASTER_CHUNK_LINES = 256
-
-# Tiempo máximo (segundos) que se espera la confirmación (ACK) de un
-# navegador tras publicar la notificación de impresión QZ Tray en el bus,
-# antes de recurrir al respaldo de impresión directa (TCP/bridge). Evita
-# que un pedido se quede "impreso" solo de forma optimista cuando en
-# realidad ningún navegador ha recibido/ejecutado la notificación.
-_PDA_PRINT_ACK_TIMEOUT = 5.0
-_PDA_PRINT_ACK_POLL_INTERVAL = 0.5
 
 
 def _json_response(data, status=200):
@@ -1245,14 +1236,15 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         #    tag: "pos_conventional_print_receipt_qztray_window", ...}
         # Esa es la acción directa y oficial que usa el botón manual para
         # imprimir mediante QZ Tray. Se publica en el bus para que el
-        # navegador ejecute su tag con ``action.doAction()``, PERO no basta
-        # con publicarla: si ningún navegador la recibe (bundle de assets
-        # desactualizado, o ninguna sesión de Odoo/POS abierta en la
-        # tienda) el ticket no llegaría a imprimirse nunca aunque el
-        # backend lo diera por bueno de forma optimista. Por eso se espera
-        # brevemente la confirmación real (ACK) y, si no llega, se recurre
-        # al mismo respaldo de impresión directa (TCP/bridge) que se usa
-        # para las acciones de tipo informe.
+        # navegador ejecute su tag con ``action.doAction()``, de forma
+        # "fire-and-forget": la PDA envía la venta y pasa inmediatamente a
+        # la siguiente, no puede quedarse bloqueada esperando a que algún
+        # navegador confirme la impresión. Si ningún navegador la recibe
+        # (bundle de assets desactualizado, o ninguna sesión de Odoo/POS
+        # abierta en la tienda) el ticket no llegará a imprimirse aunque el
+        # backend lo dé por bueno de forma optimista; el resultado real
+        # queda registrado de forma asíncrona en "Estado impresión PDA"
+        # (``pda_print_ack_state``) para poder auditarlo después.
         if action_type == "ir.actions.client":
             _logger.info(
                 "[PDA ORDER] Acción cliente de impresión directa detectada "
@@ -1265,22 +1257,18 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 order, pos_config, print_action=action
             )
             if dispatch_result.get("printed"):
-                ack_state = self._wait_for_pda_print_ack(order)
-                if ack_state == "success":
-                    response.update(dispatch_result)
-                    response["print_mode"] = (
-                        "factura_simplificada_qztray_client_action"
-                    )
-                    return response
-                _logger.warning(
-                    "[PDA ORDER] Sin confirmación de ningún navegador para "
-                    "el pedido %s tras %.0fs (estado=%s); se imprime "
-                    "directamente como respaldo (TCP/bridge) sin depender "
-                    "de QZ Tray.",
-                    order.name,
-                    _PDA_PRINT_ACK_TIMEOUT,
-                    ack_state,
+                # No se espera aquí la confirmación (ACK) del navegador: la
+                # PDA envía la venta y pasa inmediatamente a la siguiente,
+                # no puede quedarse bloqueada varios segundos por pedido.
+                # El ACK se sigue registrando de forma asíncrona (campo
+                # "Estado impresión PDA" del pedido, vía pda_print_ack_rpc)
+                # para poder auditar después si realmente llegó a
+                # imprimirse, sin condicionar esta respuesta.
+                response.update(dispatch_result)
+                response["print_mode"] = (
+                    "factura_simplificada_qztray_client_action"
                 )
+                return response
 
             params = action.get("params") or {}
             fallback_report_name = params.get("printer_report_name") or params.get(
@@ -1520,52 +1508,6 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             "print_mode": "backend_action_bus",
             "print_delivery": "async_backend_action",
         }
-
-    def _wait_for_pda_print_ack(self, order):
-        """Espera brevemente la confirmación (ACK) real de un navegador.
-
-        La notificación de impresión se publica en el bus de forma
-        "fire-and-forget": el backend no sabe si algún navegador la ha
-        recibido. La única confirmación fiable es el ACK que envía el
-        propio navegador (RPC ``pda_print_ack_rpc``, ver
-        ``pda_qztray_print_listener.esm.js`` /
-        ``pda_qztray_pos_listener.esm.js``), que se ejecuta en OTRA
-        petición HTTP (por tanto otra transacción/cursor).
-
-        Para que esa petición pueda ver el pedido y su estado "pending"
-        recién escritos hace falta comitear el cursor actual; sin ese
-        commit ninguna otra conexión vería el pedido hasta que termine
-        esta petición, y el ACK nunca podría llegar a tiempo. Se hace un
-        polling corto (``_PDA_PRINT_ACK_TIMEOUT`` segundos) reinvalidando
-        la caché del campo. Devuelve el estado final (``success``,
-        ``error`` o ``pending`` si se agota el tiempo sin respuesta), o
-        ``None`` si el campo no existe o el commit falla.
-        """
-        if "pda_print_ack_state" not in order._fields:
-            return None
-        try:
-            order.env.flush_all()
-            order.env.cr.commit()
-        except Exception:  # noqa: BLE001 - esperar el ACK no debe romper
-            _logger.exception(
-                "[PDA ORDER] No se pudo hacer commit antes de esperar el "
-                "ACK de impresión del pedido %s.",
-                order.name,
-            )
-            return None
-
-        deadline = time.monotonic() + _PDA_PRINT_ACK_TIMEOUT
-        state = "pending"
-        while time.monotonic() < deadline:
-            time.sleep(_PDA_PRINT_ACK_POLL_INTERVAL)
-            try:
-                order.invalidate_recordset(["pda_print_ack_state"])
-                state = order.pda_print_ack_state
-            except Exception:  # noqa: BLE001
-                break
-            if state and state != "pending":
-                break
-        return state
 
     def _print_report_directly(self, order, pos_config, report_name, move):
         """Renderiza ``report_name`` para ``move`` y lo imprime en directo.
