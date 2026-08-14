@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0) -->
+<odoo>
+
+    <!-- Ajustes > Punto de Venta: email al que enviar el cierre de sesión -->
+    <record id="res_config_settings_view_form_session_close_email" model="ir.ui.view">
+        <field name="name">res.config.settings.form.pos.session.close.email</field>
+        <field name="model">res.config.settings</field>
+        <field name="inherit_id" ref="point_of_sale.res_config_settings_view_form" />
+        <field name="arch" type="xml">
+            <xpath expr="//block[@id='pos_connected_devices_section']" position="inside">
+                <setting id="pos_session_closing_email_setting"
+                         string="Email de cierre de sesión"
+                         help="Al cerrar cada sesión de este Punto de Venta se enviará a esta dirección un resumen del cierre (ventas, pagos y efectivo) con el informe de detalle de ventas en PDF adjunto. Déjalo vacío para no enviar ningún correo.">
+                    <div class="content-group">
+                        <div class="row mt-2">
+                            <label string="Enviar cierre a"
+                                   for="pos_session_closing_email"
+                                   class="col-lg-4 o_light_label" />
+                            <field name="pos_session_closing_email"
+                                   placeholder="Ej: cierres@empresa.com" />
+                        </div>
+                    </div>
+                </setting>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>
+
