@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0) -->
+<templates id="template" xml:space="preserve">
+
+    <t t-inherit="point_of_sale.TicketScreen" t-inherit-mode="extension">
+        <!-- Nueva columna "Forma(s) de pago" antes de la columna de estado -->
+        <xpath expr="//td[t[@t-set='status']]" position="before">
+            <td class="align-middle">
+                <div class="small text-muted" t-esc="getPaymentMethods(order)" />
+            </td>
+        </xpath>
+    </t>
+
+</templates>
+

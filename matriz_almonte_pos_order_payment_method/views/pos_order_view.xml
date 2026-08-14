@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0) -->
+<odoo>
+
+    <!-- Añade la columna "Forma(s) de pago" a la lista de pedidos del POS -->
+    <record id="view_pos_order_tree_payment_method" model="ir.ui.view">
+        <field name="name">pos.order.list.payment.method</field>
+        <field name="model">pos.order</field>
+        <field name="inherit_id" ref="point_of_sale.view_pos_order_tree" />
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='amount_total']" position="after">
+                <field name="payment_method_names" optional="show" />
+            </xpath>
+        </field>
+    </record>
+
+</odoo>
+
