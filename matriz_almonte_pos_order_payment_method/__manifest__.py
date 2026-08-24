@@ -6,7 +6,7 @@
         "pedido, tanto en la lista de pedidos del backend como en la pantalla "
         "de pedidos dentro del Punto de Venta."
     ),
-    "version": "19.0.1.0.0",
+    "version": "19.0.1.1.0",
     "category": "Sales/Point of Sale",
     "author": "Xtendoo",
     "website": "https://www.xtendoo.es",

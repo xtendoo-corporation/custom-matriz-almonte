@@ -2,7 +2,8 @@
 <!-- License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0) -->
 <odoo>
 
-    <!-- Añade la columna "Forma(s) de pago" a la lista de pedidos del POS -->
+    <!-- Añade la columna "Forma(s) de pago" a la lista de pedidos del POS
+         y oculta la suma total que se muestra al pie de la columna "Total" -->
     <record id="view_pos_order_tree_payment_method" model="ir.ui.view">
         <field name="name">pos.order.list.payment.method</field>
         <field name="model">pos.order</field>
@@ -10,6 +11,10 @@
         <field name="arch" type="xml">
             <xpath expr="//field[@name='amount_total']" position="after">
                 <field name="payment_method_names" optional="show" />
+            </xpath>
+            <!-- Elimina el total acumulado del pie de la columna "Total" -->
+            <xpath expr="//field[@name='amount_total']" position="attributes">
+                <attribute name="sum" />
             </xpath>
         </field>
     </record>
