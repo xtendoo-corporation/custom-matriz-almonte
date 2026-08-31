@@ -48,16 +48,17 @@
                             color: #000000;
                         }
                         /* Referencia y precio: textos pequeños y juntos,
-                           centrados en el medio de la etiqueta. Se usa un
-                           bloque centrado verticalmente (top 50% + translate)
-                           que agrupa ambas líneas una encima de la otra. */
+                           alineados a la izquierda y centrados verticalmente
+                           en el medio de la etiqueta. Se usa un bloque
+                           centrado verticalmente (top 50% + translate) que
+                           agrupa ambas líneas una encima de la otra. */
                         .label-center {
                             position: absolute;
                             top: 50%;
                             left: 1mm;
                             right: 1mm;
                             transform: translateY(-50%);
-                            text-align: center;
+                            text-align: left;
                         }
                         .label-ref {
                             font-size: 7pt;

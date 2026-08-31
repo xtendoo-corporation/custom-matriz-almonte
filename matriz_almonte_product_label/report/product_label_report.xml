@@ -72,19 +72,21 @@
                             font-size: 8.5pt;
                             font-weight: bold;
                             line-height: 1.15;
-                            text-align: center;
+                            text-align: left;
                             overflow: hidden;
                             display: -webkit-box;
                             -webkit-box-orient: vertical;
                             -webkit-line-clamp: 2;
                             text-overflow: ellipsis;
                         }
-                        /* línea separadora sutil entre el nombre y el resto */
+                        /* línea separadora sutil entre el nombre y el resto,
+                           alineada al mismo margen izquierdo que el resto de
+                           elementos (en vez de centrada). */
                         .label-divider {
                             position: absolute;
                             top: 8.3mm;
-                            left: 7mm;
-                            right: 7mm;
+                            left: 1mm;
+                            right: 1mm;
                             height: 0;
                             border-top: 0.4pt solid #444444;
                         }
@@ -97,7 +99,7 @@
                             height: 5.5mm;
                             font-size: 14.5pt;
                             font-weight: bold;
-                            text-align: center;
+                            text-align: left;
                             white-space: nowrap;
                             overflow: hidden;
                         }
@@ -108,7 +110,7 @@
                             left: 2mm;
                             right: 2mm;
                             height: 9mm;
-                            text-align: center;
+                            text-align: left;
                         }
                         .label-barcode img {
                             display: inline-block;
@@ -123,7 +125,7 @@
                             font-size: 11pt;
                             font-weight: bold;
                             letter-spacing: 0.3mm;
-                            text-align: center;
+                            text-align: left;
                             white-space: nowrap;
                             overflow: hidden;
                         }
