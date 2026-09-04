@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0) -->
+<odoo>
+
+    <record id="action_report_pos_sales_xlsx" model="ir.actions.report">
+        <field name="name">Diario de Ventas POS (Excel)</field>
+        <field name="model">matriz_almonte_pos_sales_report_wizard</field>
+        <field name="report_type">xlsx</field>
+        <field
+            name="report_name"
+            >matriz_almonte_pos_sales_report.pos_sales_report_xlsx</field>
+        <field
+            name="report_file"
+            >matriz_almonte_pos_sales_report.pos_sales_report_xlsx</field>
+        <field
+            name="print_report_name"
+            >'Diario de Ventas %s_%s' % (object.date_from, object.date_to)</field>
+    </record>
+
+</odoo>
+

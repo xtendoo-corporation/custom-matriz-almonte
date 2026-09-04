@@ -79,6 +79,37 @@ class PosOrder(models.Model):
         copy=False,
         readonly=True,
     )
+    pda_payment_type = fields.Char(
+        string="Tipo de pago PDA",
+        copy=False,
+        readonly=True,
+        help=(
+            "Tipo de pago tal y como lo declaró la PDA (campo "
+            "'payment_type' del JSON): 'cash', 'card', 'combined', etc. "
+            "Permite identificar fácilmente los pedidos pagados con más "
+            "de un método (pago combinado efectivo + tarjeta)."
+        ),
+    )
+    pda_amount_cash = fields.Monetary(
+        string="Importe efectivo (PDA)",
+        copy=False,
+        readonly=True,
+        currency_field="currency_id",
+        help=(
+            "Parte del importe cobrada en efectivo según la PDA (campo "
+            "'amount_cash' del JSON), en un pago combinado."
+        ),
+    )
+    pda_amount_card = fields.Monetary(
+        string="Importe tarjeta (PDA)",
+        copy=False,
+        readonly=True,
+        currency_field="currency_id",
+        help=(
+            "Parte del importe cobrada con tarjeta según la PDA (campo "
+            "'amount_card' del JSON), en un pago combinado."
+        ),
+    )
 
     @api.model
     def pda_get_pending_print_jobs(self, config_id):

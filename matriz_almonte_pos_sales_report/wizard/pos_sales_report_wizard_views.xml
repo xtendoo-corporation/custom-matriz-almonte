@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0) -->
+<odoo>
+
+    <record id="matriz_almonte_pos_sales_report_wizard_form_view" model="ir.ui.view">
+        <field name="name">matriz_almonte_pos_sales_report_wizard.form</field>
+        <field name="model">matriz_almonte_pos_sales_report_wizard</field>
+        <field name="arch" type="xml">
+            <form string="Diario de Ventas POS (Excel)">
+                <group>
+                    <group string="Periodo">
+                        <field name="date_from" />
+                        <field name="date_to" />
+                    </group>
+                    <group string="Puntos de venta">
+                        <field name="all_pos_config" />
+                        <field
+                            name="pos_config_ids"
+                            widget="many2many_tags"
+                            options="{'no_create': True}"
+                            invisible="all_pos_config"
+                            required="not all_pos_config"
+                        />
+                    </group>
+                </group>
+                <footer>
+                    <button
+                        name="action_export_xlsx"
+                        type="object"
+                        string="Exportar a Excel"
+                        class="btn-primary"
+                        data-hotkey="q"
+                    />
+                    <button
+                        string="Cancelar"
+                        class="btn-secondary"
+                        special="cancel"
+                        data-hotkey="z"
+                    />
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_matriz_almonte_pos_sales_report_wizard" model="ir.actions.act_window">
+        <field name="name">Diario de Ventas POS (Excel)</field>
+        <field name="res_model">matriz_almonte_pos_sales_report_wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+    </record>
+
+    <menuitem
+        id="menu_matriz_almonte_pos_sales_report_wizard"
+        name="Diario de Ventas POS (Excel)"
+        parent="point_of_sale.menu_point_rep"
+        action="action_matriz_almonte_pos_sales_report_wizard"
+        sequence="20"
+        groups="point_of_sale.group_pos_user"
+    />
+
+</odoo>
+

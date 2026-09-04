@@ -577,7 +577,13 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 "qty",
             ],
             "line_optional": ["price_unit", "discount", "description", "uuid"],
-            "payment_optional": ["payment_method_id", "amount", "payment_date"],
+            "payment_optional": [
+                "payment_method_id",
+                "amount",
+                "payment_date",
+                "kind (cash|card, opcional, ayuda a resolver el método de "
+                "pago en pagos combinados)",
+            ],
             "header_optional": [
                 "uuid",
                 "partner_id",
@@ -587,7 +593,10 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 "amount_paid",
                 "payment_method_id",
                 "fpago",
-                "payment_type",
+                "payment_type (p.ej. 'combined' para pago mixto "
+                "efectivo + tarjeta)",
+                "amount_cash (importe en efectivo de un pago combinado)",
+                "amount_card (importe en tarjeta de un pago combinado)",
                 "is_printer",
                 "imprimir",
                 "payments",
@@ -711,12 +720,65 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         payments = payload.get("payments", [])
         if payments and not isinstance(payments, list):
             return "El campo 'payments' debe ser una lista."
+        for idx, payment in enumerate(payments or [], start=1):
+            if not isinstance(payment, dict):
+                return f"El pago {idx} de 'payments' no es un objeto JSON válido."
+            payment_amount = payment.get("amount")
+            if payment_amount is None:
+                return f"Pago {idx}: campo obligatorio ausente 'amount'."
+            try:
+                float(payment_amount)
+            except (TypeError, ValueError):
+                return f"Pago {idx}: 'amount' debe ser un número."
+
         amount_paid = payload.get("amount_paid")
         if amount_paid is not None:
             try:
                 float(amount_paid)
             except (TypeError, ValueError):
                 return "El campo 'amount_paid' debe ser un número."
+
+        # ----- Validación de pagos combinados (efectivo + tarjeta) --------
+        amount_card = payload.get("amount_card")
+        amount_cash = payload.get("amount_cash")
+        for key, value in (("amount_card", amount_card), ("amount_cash", amount_cash)):
+            if value is not None:
+                try:
+                    float(value)
+                except (TypeError, ValueError):
+                    return f"El campo '{key}' debe ser un número."
+
+        payment_type = str(payload.get("payment_type") or "").strip().lower()
+        if payment_type == "combined":
+            has_split_amounts = (
+                amount_cash is not None
+                and amount_card is not None
+                and float(amount_cash) > 0
+                and float(amount_card) > 0
+            )
+            if not payments and not has_split_amounts:
+                return (
+                    "Un pago combinado ('payment_type': 'combined') debe "
+                    "incluir al menos dos pagos en 'payments', o bien los "
+                    "campos 'amount_cash' y 'amount_card' con importes "
+                    "mayores que cero."
+                )
+            if payments and len(payments) < 2:
+                return (
+                    "Un pago combinado ('payment_type': 'combined') debe "
+                    "incluir al menos dos pagos en el array 'payments'."
+                )
+            if payments and has_split_amounts:
+                total_payments = sum(
+                    float(p.get("amount", 0) or 0) for p in payments
+                )
+                expected = float(amount_cash) + float(amount_card)
+                if abs(total_payments - expected) > 0.01:
+                    return (
+                        "La suma de 'payments' (%.2f) no coincide con "
+                        "'amount_cash' + 'amount_card' (%.2f)."
+                        % (total_payments, expected)
+                    )
         return None
 
     def _create_pos_order_from_payload(
@@ -797,6 +859,10 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             "to_invoice": to_invoice,
             "internal_note": f"PDA external_reference: {external_ref}",
             "pda_external_reference": external_ref or False,
+            "pda_payment_type": str(payload.get("payment_type") or "").strip()
+            or False,
+            "pda_amount_cash": float(payload.get("amount_cash") or 0.0),
+            "pda_amount_card": float(payload.get("amount_card") or 0.0),
             "pricelist_id": pricelist.id if pricelist else False,
             "fiscal_position_id": partner.property_account_position_id.id
             if partner
@@ -860,15 +926,34 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
 
         mark_as_paid = self._coerce_bool(payload.get("mark_as_paid"), default=True)
         payments = list(payload.get("payments", []))
+        payment_type_normalized = str(payload.get("payment_type") or "").strip().lower()
+        is_combined_payment = payment_type_normalized == "combined"
         if mark_as_paid and not payments:
-            payments = [
-                self._build_default_payment_payload(
-                    order=order,
+            if is_combined_payment:
+                payments = self._build_combined_payment_payloads(
                     open_session=open_session,
                     payment_date=date_order,
                     payload=payload,
                 )
-            ]
+            else:
+                payments = [
+                    self._build_default_payment_payload(
+                        order=order,
+                        open_session=open_session,
+                        payment_date=date_order,
+                        payload=payload,
+                    )
+                ]
+
+        if is_combined_payment:
+            _logger.info(
+                "💳➕💵 [PDA ORDER] Pago COMBINADO detectado (external_ref=%s): "
+                "%d pago(s), amount_cash=%.2f, amount_card=%.2f.",
+                external_ref,
+                len(payments),
+                float(payload.get("amount_cash") or 0.0),
+                float(payload.get("amount_card") or 0.0),
+            )
 
         _logger.info(f"💳 [PDA ORDER] Procesando {len(payments)} pago(s)...")
         is_refund = (
@@ -886,7 +971,12 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 order.amount_total,
             )
         for _idx, payment in enumerate(payments, start=1):
-            payment_method = self._resolve_payment_method(payment, open_session)
+            kind_hint = self._infer_payment_kind(
+                payment, payload, _idx - 1, payments
+            )
+            payment_method = self._resolve_payment_method(
+                payment, open_session, kind_hint=kind_hint
+            )
             amount = float(payment.get("amount", 0.0) or 0.0)
             # En una venta el importe es positivo; en una devolución es
             # negativo. Solo se rechaza el importe cero (no aporta nada).
@@ -2037,27 +2127,156 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         return ",".join(f"{byte:02X}" for byte in self._build_ticket_bytes(order))
 
     @staticmethod
-    def _resolve_payment_method(payment_payload, open_session):
+    def _resolve_payment_method(payment_payload, open_session, kind_hint=None):
+        """Resuelve el ``pos.payment.method`` de un pago de la lista
+        ``payments``.
+
+        Si se recibe ``payment_method_id`` y corresponde a un método de
+        pago válido y permitido en este TPV, se usa tal cual (comportamiento
+        histórico, sin cambios). Si el id no existe o no está permitido
+        -por ejemplo, porque la PDA envía un id fijo que no coincide con
+        los ids reales de esta tienda concreta- se intenta un *fallback*
+        resolviendo por tipo semántico (``kind_hint``: "cash"/"card"),
+        típicamente inferido a partir de un pago combinado
+        (``payment_type: "combined"``). Si tampoco se puede resolver así,
+        se lanza el error original.
+        """
         method_id = payment_payload.get("payment_method_id")
-        if not method_id:
-            raise ValidationError(
-                request.env._(
-                    "Cada pago en 'payments' debe incluir 'payment_method_id'."
+        payment_methods = open_session.config_id.payment_method_ids
+
+        if method_id:
+            payment_method = (
+                request.env["pos.payment.method"].sudo().browse(int(method_id))
+            )
+            valid = payment_method.exists() and payment_method in payment_methods
+            if valid:
+                return payment_method
+            if kind_hint:
+                fallback = MatrizAlmontePdaPosOrderController._resolve_payment_selector(
+                    selector=kind_hint, open_session=open_session
                 )
-            )
-        payment_method = request.env["pos.payment.method"].sudo().browse(int(method_id))
-        if not payment_method.exists():
-            raise ValidationError(
-                request.env._("El payment_method_id %s no existe.", method_id)
-            )
-        if payment_method not in open_session.config_id.payment_method_ids:
+                if fallback:
+                    _logger.warning(
+                        "[PDA ORDER] payment_method_id=%s no es válido para "
+                        "este TPV; se usa el método de pago de reserva por "
+                        "tipo '%s': %s (id=%s).",
+                        method_id,
+                        kind_hint,
+                        fallback.name,
+                        fallback.id,
+                    )
+                    return fallback
+            if not payment_method.exists():
+                raise ValidationError(
+                    request.env._("El payment_method_id %s no existe.", method_id)
+                )
             raise ValidationError(
                 request.env._(
                     "El método de pago '%s' no está permitido en este TPV.",
                     payment_method.name,
                 )
             )
-        return payment_method
+
+        if kind_hint:
+            return MatrizAlmontePdaPosOrderController._resolve_payment_selector(
+                selector=kind_hint, open_session=open_session
+            )
+
+        raise ValidationError(
+            request.env._(
+                "Cada pago en 'payments' debe incluir 'payment_method_id'."
+            )
+        )
+
+    @staticmethod
+    def _infer_payment_kind(payment, payload, index, payments_list):
+        """Intenta inferir si un pago de ``payments`` es en efectivo o en
+        tarjeta, para poder resolver un método de pago de reserva cuando
+        el ``payment_method_id`` recibido no existe o no está permitido en
+        el TPV que procesa el pedido (p. ej. la PDA envía ids fijos que no
+        coinciden con los ids reales de cada tienda).
+
+        Orden de resolución:
+          1. Campo explícito en el propio pago: ``kind``, ``fpago`` o
+             ``payment_type`` ("cash"/"card"/"00"/"tr"/"cb"...).
+          2. Convención de pago combinado: si la cabecera declara
+             ``payment_type: "combined"`` y hay exactamente dos pagos, se
+             asume que el primero es efectivo y el segundo tarjeta.
+          3. Respaldo por importe: si ``amount_cash``/``amount_card`` de
+             cabecera son distintos entre sí, se compara el importe del
+             pago con cada uno para desambiguar.
+        """
+        selector = (
+            payment.get("kind") or payment.get("fpago") or payment.get("payment_type")
+        )
+        if selector not in (None, ""):
+            normalized = str(selector).strip().lower()
+            if normalized in {"00", "0", "01", "1", "cash", "efectivo"}:
+                return "cash"
+            if normalized in {"tr", "02", "2", "card", "tarjeta", "cb"}:
+                return "card"
+
+        payment_type = str(payload.get("payment_type") or "").strip().lower()
+        if payment_type == "combined" and len(payments_list) == 2:
+            return "cash" if index == 0 else "card"
+
+        amount_cash = payload.get("amount_cash")
+        amount_card = payload.get("amount_card")
+        if (
+            amount_cash is not None
+            and amount_card is not None
+            and float(amount_cash) != float(amount_card)
+        ):
+            try:
+                amount = float(payment.get("amount", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                amount = None
+            if amount is not None:
+                if abs(amount - float(amount_cash)) <= 0.01:
+                    return "cash"
+                if abs(amount - float(amount_card)) <= 0.01:
+                    return "card"
+
+        return None
+
+    @staticmethod
+    def _build_combined_payment_payloads(open_session, payment_date, payload):
+        """Construye los pagos de un pago combinado (efectivo + tarjeta)
+        cuando la PDA no envía el array ``payments`` explícito, solo los
+        importes desglosados ``amount_cash``/``amount_card`` junto con
+        ``payment_type: "combined"``.
+        """
+        amount_cash = float(payload.get("amount_cash") or 0.0)
+        amount_card = float(payload.get("amount_card") or 0.0)
+        if amount_cash <= 0 or amount_card <= 0:
+            raise ValidationError(
+                request.env._(
+                    "Un pago combinado requiere 'amount_cash' y "
+                    "'amount_card' mayores que cero, o bien el array "
+                    "'payments' con los pagos detallados."
+                )
+            )
+        cash_method = MatrizAlmontePdaPosOrderController._resolve_payment_selector(
+            selector="cash", open_session=open_session
+        )
+        card_method = MatrizAlmontePdaPosOrderController._resolve_payment_selector(
+            selector="card", open_session=open_session
+        )
+        payment_dt = payment_date or fields.Datetime.now()
+        return [
+            {
+                "payment_method_id": cash_method.id,
+                "amount": amount_cash,
+                "payment_date": payment_dt,
+                "uuid": str(uuid4()),
+            },
+            {
+                "payment_method_id": card_method.id,
+                "amount": amount_card,
+                "payment_date": payment_dt,
+                "uuid": str(uuid4()),
+            },
+        ]
 
     @staticmethod
     def _build_default_payment_payload(order, open_session, payment_date, payload):
@@ -2147,8 +2366,9 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             )
             return cash_method
 
-        # Tarjeta: "tr"/"02"/"2" (códigos PDA) o "card"/"tarjeta".
-        if normalized in {"tr", "02", "2", "card", "tarjeta"}:
+        # Tarjeta: "tr"/"02"/"2" (códigos PDA), "cb" (Tarjeta/"Carte
+        # Bleue", usado en pagos combinados) o "card"/"tarjeta".
+        if normalized in {"tr", "02", "2", "cb", "card", "tarjeta"}:
             if "is_cash_count" in payment_methods._fields:
                 non_cash_methods = payment_methods.filtered(lambda m: not m.is_cash_count)
                 if non_cash_methods:

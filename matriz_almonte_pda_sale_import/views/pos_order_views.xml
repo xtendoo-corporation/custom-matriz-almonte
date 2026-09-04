@@ -10,6 +10,24 @@
         <field name="arch" type="xml">
             <field name="pos_reference" position="after">
                 <field name="pda_external_reference" readonly="1" />
+                <field
+                    name="pda_payment_type"
+                    readonly="1"
+                    invisible="not pda_payment_type"
+                    string="Tipo de pago PDA"
+                />
+                <field
+                    name="pda_amount_cash"
+                    readonly="1"
+                    invisible="pda_payment_type != 'combined'"
+                    string="Importe efectivo (PDA)"
+                />
+                <field
+                    name="pda_amount_card"
+                    readonly="1"
+                    invisible="pda_payment_type != 'combined'"
+                    string="Importe tarjeta (PDA)"
+                />
             </field>
             <field name="pos_reference" position="after">
                 <field

@@ -1377,4 +1377,300 @@ class TestMatrizAlmontePdaSaleImport(TransactionCase):
         self.assertAlmostEqual(line_a.price_unit, 0.75 / 1.21, places=2)
         self.assertAlmostEqual(line_a.price_subtotal_incl, 1.5, places=2)
 
+    # ------------------------------------------------------------------
+    # Tests de pagos combinados (efectivo + tarjeta)
+    # ------------------------------------------------------------------
+
+    def _validate_pos_order_payload(self, payload):
+        from ..controllers.pda_pos_order_controller import (
+            MatrizAlmontePdaPosOrderController,
+        )
+
+        return MatrizAlmontePdaPosOrderController._validate_payload(payload)
+
+    def test_49_combined_payment_with_valid_payment_method_ids(self):
+        """Pago combinado con payment_method_id válidos crea 2 pos.payment
+        y guarda la trazabilidad del pago combinado en el pedido."""
+        self._ensure_open_session()
+        session = self.env["pos.session"].search(
+            [("config_id", "=", self.tienda.id), ("state", "=", "opened")],
+            limit=1,
+        )
+        methods = session.config_id.payment_method_ids
+        self.assertGreaterEqual(
+            len(methods),
+            2,
+            "Se necesitan al menos 2 métodos de pago para probar el pago "
+            "combinado.",
+        )
+        cash_method = methods.filtered("is_cash_count")[:1] or methods[:1]
+        card_method = (methods - cash_method)[:1] or methods[-1:]
+
+        payload, status = self._call_pos_order_endpoint(
+            payload={
+                "external_reference": "PDA-POS-ORDER-COMBINED-001",
+                "amount_total": 20.0,
+                "amount_paid": 20.0,
+                "lines": [
+                    {
+                        "product_id": self.product_export.id,
+                        "qty": 1,
+                        "price_unit": 20.0,
+                        "discount": 0,
+                    }
+                ],
+                "payments": [
+                    {"payment_method_id": cash_method.id, "amount": 10.0},
+                    {"payment_method_id": card_method.id, "amount": 10.0},
+                ],
+                "fpago": "CB",
+                "payment_type": "combined",
+                "to_invoice": True,
+                "is_printer": False,
+                "amount_card": 10.0,
+                "amount_cash": 10.0,
+            },
+            headers={"Authorization": f"Bearer {self.token.token}"},
+        )
+
+        self.assertEqual(status, 200, payload)
+        self.assertTrue(payload["success"], payload)
+        order = self.env["pos.order"].browse(payload["order_id"])
+        self.assertEqual(len(order.payment_ids), 2)
+        self.assertAlmostEqual(order.amount_paid, 20.0, places=2)
+        self.assertEqual(
+            set(order.payment_ids.mapped("payment_method_id.id")),
+            {cash_method.id, card_method.id},
+        )
+        self.assertEqual(order.pda_payment_type, "combined")
+        self.assertAlmostEqual(order.pda_amount_cash, 10.0, places=2)
+        self.assertAlmostEqual(order.pda_amount_card, 10.0, places=2)
+
+    def test_50_combined_payment_falls_back_when_payment_method_ids_unknown(self):
+        """Si los payment_method_id de 'payments' no existen en este TPV
+        (p. ej. la PDA envía ids fijos de otra tienda/entorno), se resuelve
+        automáticamente efectivo/tarjeta por convención de pago combinado,
+        sin que falle la creación del pedido."""
+        self._ensure_open_session()
+        session = self.env["pos.session"].search(
+            [("config_id", "=", self.tienda.id), ("state", "=", "opened")],
+            limit=1,
+        )
+        methods = session.config_id.payment_method_ids
+        self.assertGreaterEqual(len(methods), 2)
+
+        payload, status = self._call_pos_order_endpoint(
+            payload={
+                "external_reference": "PDA-POS-ORDER-COMBINED-FALLBACK-001",
+                "amount_total": 20.0,
+                "amount_paid": 20.0,
+                "lines": [
+                    {
+                        "product_id": self.product_export.id,
+                        "qty": 1,
+                        "price_unit": 20.0,
+                        "discount": 0,
+                    }
+                ],
+                # IDs que casi con total seguridad no existen como
+                # pos.payment.method en este entorno de pruebas.
+                "payments": [
+                    {"payment_method_id": 999901, "amount": 10.0},
+                    {"payment_method_id": 999902, "amount": 10.0},
+                ],
+                "fpago": "CB",
+                "payment_type": "combined",
+                "to_invoice": True,
+                "is_printer": False,
+                "amount_card": 10.0,
+                "amount_cash": 10.0,
+            },
+            headers={"Authorization": f"Bearer {self.token.token}"},
+        )
+
+        self.assertEqual(status, 200, payload)
+        self.assertTrue(payload["success"], payload)
+        order = self.env["pos.order"].browse(payload["order_id"])
+        self.assertEqual(len(order.payment_ids), 2)
+        self.assertAlmostEqual(order.amount_paid, 20.0, places=2)
+        used_methods = order.payment_ids.mapped("payment_method_id")
+        self.assertTrue(all(m in methods for m in used_methods))
+        # Uno de los métodos usados debe ser el de efectivo y otro distinto
+        # (asumido como tarjeta), reproduciendo el pago combinado.
+        self.assertEqual(len(set(used_methods.ids)), 2)
+
+    def test_51_create_pos_order_from_user_example_combined_payload(self):
+        """Reproduce EXACTAMENTE el JSON de ejemplo de pago combinado de la
+        PDA (incluyendo los ids de método de pago 10/11 tal cual), y
+        confirma que el pedido se crea y se paga correctamente gracias al
+        fallback automático a efectivo/tarjeta."""
+        self._ensure_open_session()
+
+        product_iva21 = self.env["product.product"].create(
+            {
+                "name": "Producto IVA21 combinado (test)",
+                "type": "consu",
+                "sale_ok": True,
+                "default_code": "PRODUCTO-IVA21",
+                "barcode": "8410000000011",
+                "taxes_id": [(6, 0, self.product_export.taxes_id.ids)],
+            }
+        )
+        product_iva0 = self.env["product.product"].create(
+            {
+                "name": "Producto IVA0 combinado (test)",
+                "type": "consu",
+                "sale_ok": True,
+                "default_code": "PRODUCTO-IVA0",
+                "barcode": "8410000000028",
+                "taxes_id": [(6, 0, [])],
+            }
+        )
+
+        payload, status = self._call_pos_order_endpoint(
+            payload={
+                "external_reference": "PDA-POS-ORDER-20260904-123",
+                "amount_total": 20.0,
+                "amount_paid": 20.0,
+                "lines": [
+                    {
+                        "default_code": "PRODUCTO-IVA21",
+                        "barcode": "8410000000011",
+                        "qty": 1,
+                        "price_unit": 12.1,
+                        "discount": 0,
+                    },
+                    {
+                        "default_code": "PRODUCTO-IVA0",
+                        "barcode": "8410000000028",
+                        "qty": 1,
+                        "price_unit": 7.9,
+                        "discount": 0,
+                    },
+                ],
+                "payments": [
+                    {"payment_method_id": 10, "amount": 10.0},
+                    {"payment_method_id": 11, "amount": 10.0},
+                ],
+                "fpago": "CB",
+                "payment_type": "combined",
+                "to_invoice": True,
+                "is_printer": False,
+                "amount_card": 10.0,
+                "amount_cash": 10.0,
+            },
+            headers={"Authorization": f"Bearer {self.token.token}"},
+        )
+
+        self.assertEqual(status, 200, payload)
+        self.assertTrue(payload["success"], payload)
+        order = self.env["pos.order"].browse(payload["order_id"])
+        self.assertEqual(len(order.lines), 2)
+        self.assertEqual(len(order.payment_ids), 2)
+        self.assertAlmostEqual(order.amount_total, 20.0, places=2)
+        self.assertAlmostEqual(order.amount_paid, 20.0, places=2)
+        self.assertEqual(order.pda_payment_type, "combined")
+        self.assertAlmostEqual(order.pda_amount_cash, 10.0, places=2)
+        self.assertAlmostEqual(order.pda_amount_card, 10.0, places=2)
+        self.assertIn(order.state, ("paid", "done", "invoiced"))
+        self.assertTrue(order.account_move)
+
+    def test_52_validate_combined_requires_split_info(self):
+        """'payment_type': 'combined' sin 'payments' ni amount_cash/
+        amount_card de cabecera debe fallar la validación."""
+        payload = {
+            "external_reference": "PDA-VALIDATE-COMBINED-001",
+            "lines": [{"product_id": 1, "qty": 1, "price_unit": 1.0}],
+            "payment_type": "combined",
+        }
+        error = self._validate_pos_order_payload(payload)
+        self.assertIsNotNone(error)
+        self.assertIn("combinado", error.lower())
+
+    def test_53_validate_combined_with_single_payment_fails(self):
+        """'payment_type': 'combined' con un único pago en 'payments' debe
+        fallar la validación (se requieren al menos dos)."""
+        payload = {
+            "external_reference": "PDA-VALIDATE-COMBINED-002",
+            "lines": [{"product_id": 1, "qty": 1, "price_unit": 1.0}],
+            "payments": [{"payment_method_id": 1, "amount": 10.0}],
+            "payment_type": "combined",
+        }
+        error = self._validate_pos_order_payload(payload)
+        self.assertIsNotNone(error)
+
+    def test_54_validate_combined_amount_mismatch_fails(self):
+        """La suma de 'payments' debe coincidir con amount_cash+amount_card."""
+        payload = {
+            "external_reference": "PDA-VALIDATE-COMBINED-003",
+            "lines": [{"product_id": 1, "qty": 1, "price_unit": 1.0}],
+            "payments": [
+                {"payment_method_id": 1, "amount": 5.0},
+                {"payment_method_id": 2, "amount": 5.0},
+            ],
+            "payment_type": "combined",
+            "amount_cash": 10.0,
+            "amount_card": 10.0,
+        }
+        error = self._validate_pos_order_payload(payload)
+        self.assertIsNotNone(error)
+
+    def test_55_validate_combined_ok(self):
+        """Un payload de pago combinado bien formado no genera error,
+        replicando el JSON de ejemplo real enviado por la PDA."""
+        payload = {
+            "external_reference": "PDA-POS-ORDER-20260904-123",
+            "amount_total": 20.0,
+            "amount_paid": 20.0,
+            "lines": [
+                {
+                    "default_code": "PRODUCTO-IVA21",
+                    "barcode": "8410000000011",
+                    "qty": 1,
+                    "price_unit": 12.1,
+                    "discount": 0,
+                },
+                {
+                    "default_code": "PRODUCTO-IVA0",
+                    "barcode": "8410000000028",
+                    "qty": 1,
+                    "price_unit": 7.9,
+                    "discount": 0,
+                },
+            ],
+            "payments": [
+                {"payment_method_id": 10, "amount": 10.0},
+                {"payment_method_id": 11, "amount": 10.0},
+            ],
+            "fpago": "CB",
+            "payment_type": "combined",
+            "to_invoice": True,
+            "is_printer": False,
+            "amount_card": 10.0,
+            "amount_cash": 10.0,
+        }
+        error = self._validate_pos_order_payload(payload)
+        self.assertIsNone(error)
+
+    def test_56_resolve_payment_selector_accepts_cb_as_card(self):
+        """El código 'CB' (Tarjeta Bancaria) que envía la PDA en 'fpago'
+        debe resolverse como método de pago de tarjeta (no efectivo)."""
+        from ..controllers.pda_pos_order_controller import (
+            MatrizAlmontePdaPosOrderController,
+        )
+
+        session = self._ensure_open_session()
+        methods = session.config_id.payment_method_ids
+        cash_method = methods.filtered("is_cash_count")[:1] or methods[:1]
+        non_cash_methods = methods - cash_method
+        if not non_cash_methods:
+            self.skipTest(
+                "Se necesita un método de pago no-efectivo para este test."
+            )
+
+        resolved = MatrizAlmontePdaPosOrderController._resolve_payment_selector(
+            selector="CB", open_session=session
+        )
+        self.assertIn(resolved, non_cash_methods)
+
 
