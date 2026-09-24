@@ -13,12 +13,19 @@
                          string="Email de cierre de sesión"
                          help="Al cerrar cada sesión de este Punto de Venta se enviará a esta dirección un resumen del cierre (ventas, pagos y efectivo) con el informe de detalle de ventas en PDF adjunto. Déjalo vacío para no enviar ningún correo.">
                     <div class="content-group">
-                        <div class="row mt-2">
+                        <div class="row mt-2 align-items-center">
                             <label string="Enviar cierre a"
                                    for="pos_session_closing_email"
-                                   class="col-lg-4 o_light_label" />
-                            <field name="pos_session_closing_email"
-                                   placeholder="Ej: cierres@empresa.com" />
+                                   class="col-12 col-lg-4 o_light_label mb-2 mb-lg-0" />
+                            <div class="col-12 col-lg-8 d-flex align-items-center gap-2">
+                                <field name="pos_session_closing_email"
+                                       class="flex-grow-1"
+                                       placeholder="Ej: cierres@empresa.com" />
+                                <button name="action_send_test_closing_email"
+                                        type="object"
+                                        string="Enviar prueba"
+                                        class="btn btn-secondary text-nowrap" />
+                            </div>
                         </div>
                     </div>
                 </setting>
@@ -27,4 +34,3 @@
     </record>
 
 </odoo>
-
