@@ -453,3 +453,25 @@ class TestPdaOrderContract(TransactionCase):
         params.set_param(order._RECEIPT_LOGO_PARAM, "0")
         width, _h = self._logo_size(order.get_pos_conventional_qztray_raw_payload()["logo"])
         self.assertEqual(width, 1600)
+
+    def test_27_receipt_logo_is_binarized_and_keeps_light_strokes(self):
+        import base64
+        import io
+
+        from PIL import Image
+
+        data, _ = self._create()
+        order = self.env["pos.order"].browse(data["order_id"])
+        # Trazo gris claro (como queda un trazo fino tras reducir) sobre blanco.
+        img = Image.new("L", (1200, 600), 255)
+        for x in range(100, 1100):
+            for y in range(280, 320):
+                img.putpixel((x, y), 170)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        order.company_id.logo = base64.b64encode(buf.getvalue())
+        logo = order.get_pos_conventional_qztray_raw_payload()["logo"]
+        out = Image.open(io.BytesIO(base64.b64decode(logo))).convert("L")
+        values = {v for v in out.getdata()}
+        self.assertLessEqual(values, {0, 255})
+        self.assertIn(0, values, "El trazo gris debe imprimirse en negro.")

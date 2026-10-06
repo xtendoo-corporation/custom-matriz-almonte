@@ -296,6 +296,12 @@ class PosOrder(models.Model):
     _RECEIPT_LOGO_PARAM = "matriz_almonte_pda_sale_import.receipt_logo_max_width"
     _RECEIPT_LOGO_DEFAULT_WIDTH = 288  # dots; el papel de 80 mm tiene ~576
     _RECEIPT_LOGO_MAX_HEIGHT = 200
+    _RECEIPT_LOGO_THRESHOLD_PARAM = (
+        "matriz_almonte_pda_sale_import.receipt_logo_threshold"
+    )
+    # Por encima de este nivel de gris (0-255) un punto se imprime en blanco.
+    # Alto = más negro (se conservan los trazos finos que la reducción aclara).
+    _RECEIPT_LOGO_DEFAULT_THRESHOLD = 215
 
     def _pda_resize_receipt_logo(self, logo_b64):
         """Reduce el logo para que quepa en el ticket RAW de 80 mm.
@@ -307,7 +313,7 @@ class PosOrder(models.Model):
         reducir). Si algo falla se devuelve el logo original.
         """
         try:
-            from PIL import Image
+            from PIL import Image, ImageOps
         except ImportError:  # pragma: no cover
             return logo_b64
         try:
@@ -330,6 +336,21 @@ class PosOrder(models.Model):
             image.thumbnail(
                 (max_width, self._RECEIPT_LOGO_MAX_HEIGHT), Image.LANCZOS
             )
+            # La impresora térmica solo imprime negro o nada: se binariza para
+            # que los grises que deja la reducción no se pierdan en blanco.
+            try:
+                threshold = int(
+                    self.env["ir.config_parameter"]
+                    .sudo()
+                    .get_param(
+                        self._RECEIPT_LOGO_THRESHOLD_PARAM,
+                        self._RECEIPT_LOGO_DEFAULT_THRESHOLD,
+                    )
+                )
+            except (TypeError, ValueError):
+                threshold = self._RECEIPT_LOGO_DEFAULT_THRESHOLD
+            image = ImageOps.autocontrast(image)
+            image = image.point(lambda value: 255 if value > threshold else 0)
             output = io.BytesIO()
             image.save(output, format="PNG")
             return base64.b64encode(output.getvalue()).decode()
