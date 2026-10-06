@@ -1642,7 +1642,9 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 move.id,
             )
             # ====== LLAMADA A LA MISMA ACCIÓN QUE EL BOTÓN MANUAL ======
-            action = order.action_print_factura_simplificada()
+            action = order.with_context(
+                pda_raw_receipt=True
+            ).action_print_factura_simplificada()
         except Exception as exc:  # noqa: BLE001 - la impresión no debe romper
             _logger.exception(
                 "[PDA ORDER] Error llamando a action_print_factura_simplificada "

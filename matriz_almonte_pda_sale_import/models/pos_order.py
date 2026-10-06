@@ -169,7 +169,9 @@ class PosOrder(models.Model):
             action = order.pda_print_action
             if not action and hasattr(order, "action_print_factura_simplificada"):
                 try:
-                    action = order.action_print_factura_simplificada()
+                    action = order.with_context(
+                        pda_raw_receipt=True
+                    ).action_print_factura_simplificada()
                     if action:
                         order.sudo().pda_print_action = action
                 except Exception:  # noqa: BLE001 - un trabajo no bloquea los demás
@@ -288,6 +290,29 @@ class PosOrder(models.Model):
             if cron:
                 cron._trigger()
         return True
+
+    def action_print_factura_simplificada(self):
+        """Imprime desde la PDA con el ticket RAW (ESC/POS), no con el PDF.
+
+        ``pos_conventional_qztray`` devuelve ``raw_receipt: False`` para este
+        botón, lo que manda el informe como PDF a la impresora. En una cola
+        térmica ``raw`` eso sale como un ticket interminable. El flujo normal
+        del TPV usa el ticket RAW; aquí se fuerza lo mismo, pero solo cuando
+        la llamada viene de la PDA (contexto ``pda_raw_receipt``), para no
+        cambiar el botón manual del formulario del pedido.
+        """
+        action = super().action_print_factura_simplificada()
+        if (
+            self.env.context.get("pda_raw_receipt")
+            and isinstance(action, dict)
+            and action.get("type") == "ir.actions.client"
+            and (action.get("params") or {}).get("use_qztray")
+        ):
+            params = dict(action["params"])
+            params["raw_receipt"] = True
+            params["print_original_receipt"] = False
+            action["params"] = params
+        return action
 
     def matriz_almonte_ensure_account_move(self):
         """Devuelve y, si es necesario, recupera la factura del pedido.

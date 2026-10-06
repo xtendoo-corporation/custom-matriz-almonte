@@ -199,7 +199,8 @@ export const pdaAutoPrintService = {
                 printAction = await orm.call(
                     "pos.order",
                     "action_print_factura_simplificada",
-                    [[payload.order_id]]
+                    [[payload.order_id]],
+                    { context: { pda_raw_receipt: true } }
                 );
             }
             diagnosticLog("info", "ACCIÓN DE IMPRESIÓN RECIBIDA", [

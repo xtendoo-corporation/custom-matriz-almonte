@@ -383,3 +383,32 @@ class TestPdaOrderContract(TransactionCase):
         result, status = self._call("pda_pos_status", {"references": []})
         self.assertEqual(status, 400)
         self.assertEqual(result["code"], "INVALID_PAYLOAD")
+
+    # -- ticket RAW desde la PDA ---------------------------------------
+    def _qz_order(self):
+        self.tienda.sudo().pos_print_receipt_with_qztray = True
+        self.tienda.sudo().pos_print_original_receipt_with_qztray = True
+        data, _ = self._create()
+        return self.env["pos.order"].browse(data["order_id"])
+
+    def test_22_pda_print_action_is_raw_receipt(self):
+        order = self._qz_order()
+        action = order.with_context(pda_raw_receipt=True).action_print_factura_simplificada()
+        self.assertEqual(action["tag"], "pos_conventional_print_receipt_qztray_window")
+        self.assertTrue(action["params"]["use_qztray"])
+        self.assertTrue(action["params"]["raw_receipt"])
+        self.assertFalse(action["params"]["print_original_receipt"])
+
+    def test_23_manual_button_unchanged(self):
+        order = self._qz_order()
+        action = order.action_print_factura_simplificada()
+        self.assertFalse(action["params"]["raw_receipt"])
+        self.assertTrue(action["params"]["print_original_receipt"])
+
+    def test_24_without_qztray_action_untouched(self):
+        self.tienda.sudo().pos_print_receipt_with_qztray = False
+        data, _ = self._create()
+        order = self.env["pos.order"].browse(data["order_id"])
+        plain = order.action_print_factura_simplificada()
+        pda = order.with_context(pda_raw_receipt=True).action_print_factura_simplificada()
+        self.assertEqual(plain, pda)

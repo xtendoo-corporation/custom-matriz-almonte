@@ -10,7 +10,7 @@
     "author": "Xtendoo",
     "website": "https://www.xtendoo.es",
     "license": "LGPL-3",
-    "depends": ["base", "mail", "point_of_sale"],
+    "depends": ["base", "mail", "point_of_sale", "pos_conventional_qztray"],
     "data": [
         "security/security.xml",
         "security/ir.model.access.csv",
