@@ -6,6 +6,8 @@ y factura simplificada) para las operaciones que llegan por la API de la PDA,
 que crean el pedido de forma programática sin pasar por ``_process_saved_order``.
 """
 
+import base64
+import io
 import logging
 
 from odoo import _, api, fields, models
@@ -290,6 +292,56 @@ class PosOrder(models.Model):
             if cron:
                 cron._trigger()
         return True
+
+    _RECEIPT_LOGO_PARAM = "matriz_almonte_pda_sale_import.receipt_logo_max_width"
+    _RECEIPT_LOGO_DEFAULT_WIDTH = 288  # dots; el papel de 80 mm tiene ~576
+    _RECEIPT_LOGO_MAX_HEIGHT = 200
+
+    def _pda_resize_receipt_logo(self, logo_b64):
+        """Reduce el logo para que quepa en el ticket RAW de 80 mm.
+
+        El logo de la compañía puede ser enorme; enviado tal cual a la
+        impresora térmica sale gigante y cortado. El ancho máximo (en puntos)
+        se puede ajustar con el parámetro del sistema
+        ``matriz_almonte_pda_sale_import.receipt_logo_max_width`` (0 = no
+        reducir). Si algo falla se devuelve el logo original.
+        """
+        try:
+            from PIL import Image
+        except ImportError:  # pragma: no cover
+            return logo_b64
+        try:
+            max_width = int(
+                self.env["ir.config_parameter"]
+                .sudo()
+                .get_param(self._RECEIPT_LOGO_PARAM, self._RECEIPT_LOGO_DEFAULT_WIDTH)
+            )
+        except (TypeError, ValueError):
+            max_width = self._RECEIPT_LOGO_DEFAULT_WIDTH
+        if max_width <= 0:
+            return logo_b64
+        try:
+            image = Image.open(io.BytesIO(base64.b64decode(logo_b64)))
+            if image.mode in ("RGBA", "LA", "P"):
+                image = image.convert("RGBA")
+                background = Image.new("RGBA", image.size, (255, 255, 255, 255))
+                image = Image.alpha_composite(background, image)
+            image = image.convert("L")
+            image.thumbnail(
+                (max_width, self._RECEIPT_LOGO_MAX_HEIGHT), Image.LANCZOS
+            )
+            output = io.BytesIO()
+            image.save(output, format="PNG")
+            return base64.b64encode(output.getvalue()).decode()
+        except Exception:  # noqa: BLE001 - el logo nunca debe impedir el ticket
+            _logger.exception("[PDA ORDER] No se pudo redimensionar el logo del ticket.")
+            return logo_b64
+
+    def get_pos_conventional_qztray_raw_payload(self):
+        payload = super().get_pos_conventional_qztray_raw_payload()
+        if isinstance(payload, dict) and payload.get("logo"):
+            payload["logo"] = self._pda_resize_receipt_logo(payload["logo"])
+        return payload
 
     def action_print_factura_simplificada(self):
         """Imprime desde la PDA con el ticket RAW (ESC/POS), no con el PDF.

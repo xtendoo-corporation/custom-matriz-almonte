@@ -412,3 +412,44 @@ class TestPdaOrderContract(TransactionCase):
         plain = order.action_print_factura_simplificada()
         pda = order.with_context(pda_raw_receipt=True).action_print_factura_simplificada()
         self.assertEqual(plain, pda)
+
+    # -- logo del ticket ------------------------------------------------
+    def _logo_size(self, b64):
+        import base64
+        import io
+
+        from PIL import Image
+
+        return Image.open(io.BytesIO(base64.b64decode(b64))).size
+
+    def _big_logo(self):
+        import base64
+        import io
+
+        from PIL import Image
+
+        buf = io.BytesIO()
+        Image.new("RGB", (1600, 900), (10, 10, 10)).save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue())
+
+    def test_25_receipt_logo_is_resized(self):
+        data, _ = self._create()
+        order = self.env["pos.order"].browse(data["order_id"])
+        order.company_id.logo = self._big_logo()
+        payload = order.get_pos_conventional_qztray_raw_payload()
+        width, height = self._logo_size(payload["logo"])
+        self.assertLessEqual(width, 288)
+        self.assertLessEqual(height, 200)
+        self.assertAlmostEqual(width / height, 1600 / 900, delta=0.1)
+
+    def test_26_receipt_logo_width_configurable_and_disable(self):
+        data, _ = self._create()
+        order = self.env["pos.order"].browse(data["order_id"])
+        order.company_id.logo = self._big_logo()
+        params = self.env["ir.config_parameter"].sudo()
+        params.set_param(order._RECEIPT_LOGO_PARAM, "100")
+        width, _h = self._logo_size(order.get_pos_conventional_qztray_raw_payload()["logo"])
+        self.assertLessEqual(width, 100)
+        params.set_param(order._RECEIPT_LOGO_PARAM, "0")
+        width, _h = self._logo_size(order.get_pos_conventional_qztray_raw_payload()["logo"])
+        self.assertEqual(width, 1600)
