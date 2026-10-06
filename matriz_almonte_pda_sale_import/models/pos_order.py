@@ -27,6 +27,44 @@ class PosOrder(models.Model):
             "por su referencia de origen."
         ),
     )
+    _pda_external_reference_unique = models.Constraint(
+        "unique (pda_external_reference)",
+        "Ya existe un pedido POS con esa referencia externa de la PDA.",
+    )
+
+    pda_invoice_state = fields.Selection(
+        selection=[
+            ("pending", "Pendiente"),
+            ("done", "Facturado"),
+            ("error", "Error (se reintentará)"),
+        ],
+        string="Estado factura diferida PDA",
+        copy=False,
+        readonly=True,
+        index="btree_not_null",
+        help="Solo se rellena cuando la facturación del pedido se difiere "
+        "(ajuste 'Facturación diferida PDA'). Un cron reintenta los "
+        "pedidos pendientes o con error.",
+    )
+    pda_invoice_attempts = fields.Integer(
+        string="Intentos de facturación PDA", copy=False, readonly=True
+    )
+    pda_invoice_error = fields.Text(
+        string="Último error de facturación PDA", copy=False, readonly=True
+    )
+    pda_amount_mismatch = fields.Boolean(
+        string="Descuadre de importe PDA",
+        copy=False,
+        readonly=True,
+        help="El total calculado por Odoo difiere del 'amount_total' que "
+        "envió la PDA.",
+    )
+    pda_payload_amount_total = fields.Monetary(
+        string="Total enviado por la PDA",
+        copy=False,
+        readonly=True,
+        currency_field="currency_id",
+    )
     pda_simplified_invoice_number = fields.Char(
         string="Nº factura simplificada (PDA)",
         index=True,
@@ -178,6 +216,77 @@ class PosOrder(models.Model):
             state,
             f" - {message}" if message else "",
         )
+        return True
+
+    # ------------------------------------------------------------------
+    # Facturación diferida
+    # ------------------------------------------------------------------
+    _PDA_INVOICE_MAX_ATTEMPTS = 10
+    _PDA_INVOICE_BATCH = 20
+
+    def pda_run_deferred_invoice(self):
+        """Genera albarán + factura de un pedido, aislando el fallo.
+
+        Cada pedido se procesa en su propio savepoint: si falla, el pedido
+        sigue pagado, queda en estado ``error`` con el motivo y se
+        reintenta en la siguiente pasada del cron.
+
+        :returns: ``True`` si el pedido quedó facturado.
+        """
+        self.ensure_one()
+        try:
+            with self.env.cr.savepoint():
+                self.matriz_almonte_generate_picking_and_invoice()
+        except Exception as exc:  # noqa: BLE001 - nunca perder la venta
+            _logger.exception(
+                "[PDA ORDER] Falló la facturación diferida del pedido %s.",
+                self.name,
+            )
+            self.write(
+                {
+                    "pda_invoice_state": "error",
+                    "pda_invoice_attempts": self.pda_invoice_attempts + 1,
+                    "pda_invoice_error": str(exc)[:2000],
+                }
+            )
+            return False
+        self.write(
+            {
+                "pda_invoice_state": "done",
+                "pda_invoice_attempts": self.pda_invoice_attempts + 1,
+                "pda_invoice_error": False,
+            }
+        )
+        return True
+
+    @api.model
+    def _cron_pda_process_deferred_invoices(self):
+        """Cron: factura los pedidos PDA con facturación pendiente o fallida."""
+        orders = self.sudo().search(
+            [
+                ("pda_invoice_state", "in", ("pending", "error")),
+                ("pda_invoice_attempts", "<", self._PDA_INVOICE_MAX_ATTEMPTS),
+                ("state", "in", ("paid", "done", "invoiced")),
+            ],
+            order="id asc",
+            limit=self._PDA_INVOICE_BATCH,
+        )
+        for order in orders:
+            order.pda_run_deferred_invoice()
+            # Confirma pedido a pedido: un fallo posterior no revierte lo ya
+            # facturado.
+            self.env.cr.commit()
+        # Solo se re-dispara de inmediato si quedan pedidos nunca
+        # intentados; los que fallaron esperan a la siguiente pasada
+        # periódica para no entrar en un bucle rápido.
+        remaining = self.sudo().search_count([("pda_invoice_state", "=", "pending")])
+        if remaining:
+            cron = self.env.ref(
+                "matriz_almonte_pda_sale_import.ir_cron_pda_deferred_invoices",
+                raise_if_not_found=False,
+            )
+            if cron:
+                cron._trigger()
         return True
 
     def matriz_almonte_ensure_account_move(self):

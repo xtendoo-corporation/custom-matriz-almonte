@@ -7,11 +7,15 @@ import base64
 import socket
 import subprocess
 import tempfile
+import time
 import unicodedata
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
+import psycopg2
+import pytz
 import requests as http_requests
 
 try:
@@ -62,6 +66,39 @@ def _error(code, message, http_status=400, **extra):
     return _json_response(payload, status=http_status)
 
 
+class _PdaCodedError(ValidationError):
+    """``ValidationError`` con un ``code`` de contrato para la respuesta."""
+
+    def __init__(self, message, pda_code):
+        super().__init__(message)
+        self.pda_code = pda_code
+
+
+class _Timings:
+    """Acumula milisegundos por fase para el campo ``timings_ms``."""
+
+    def __init__(self):
+        self._start = time.monotonic()
+        self._last = self._start
+        self.phases = {}
+
+    def mark(self, phase):
+        now = time.monotonic()
+        self.phases[phase] = self.phases.get(phase, 0) + int((now - self._last) * 1000)
+        self._last = now
+
+    def skip(self):
+        """Descarta el tiempo transcurrido desde la última marca."""
+        self._last = time.monotonic()
+
+    def as_dict(self):
+        total = int((time.monotonic() - self._start) * 1000)
+        return {"total": total, **self.phases}
+
+
+_DEFER_INVOICE_PARAM = "matriz_almonte_pda_sale_import.defer_invoice"
+
+
 def _remote_ip():
     return (
         request.httprequest.headers.get("X-Forwarded-For", "")
@@ -75,6 +112,8 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
 
     _STATUS_ROUTE = "/api/matriz_almonte/pda/pos/session/status"
     _ORDER_ROUTE = "/api/matriz_almonte/pda/pos/order"
+    _SUMMARY_ROUTE = "/api/matriz_almonte/pda/pos/summary"
+    _STATUS_ROUTE_ORDERS = "/api/matriz_almonte/pda/pos/status"
 
     @http.route(
         _STATUS_ROUTE,
@@ -221,9 +260,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
     )
     def pda_create_pos_order(self, **kwargs):
         """Crea un pedido POS desde un payload JSON externo."""
-        _logger.info("=" * 80)
-        _logger.info("=" * 80)
-        _logger.info("=" * 80)
+        timings = _Timings()
         _logger.info("=" * 80)
         _logger.info("🔵 [PDA ORDER] Nueva petición de creación de pedido desde PDA")
         _logger.info(f"   IP del cliente: {_remote_ip()}")
@@ -236,6 +273,7 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         _logger.info(
             f"✅ [PDA ORDER] Token autenticado: {token_rec.name} (ID: {token_rec.id})"
         )
+        timings.mark("auth")
 
         # ====== LEER JSON RAW PRIMERO ======
         payload_or_error = self._read_json_payload()
@@ -366,67 +404,26 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                     pmt.get("amount"),
                 )
 
-        # Validar el payload
-        validation_error = self._validate_payload(payload)
-        if validation_error:
-            _logger.warning(f"❌ [PDA ORDER] Validación fallida: {validation_error}")
-            return _error(
-                "VALIDATION_ERROR",
-                validation_error,
-                http_status=400,
-                required_fields=self._required_payload_fields(),
-            )
-
         external_ref = str(
             payload.get("external_reference") or payload.get("uuid") or ""
         ).strip()
         order_uuid = str(payload.get("uuid") or external_ref or uuid4())
+        timings.mark("validate")
 
         _logger.info("🔍 [PDA ORDER] Buscando pedido duplicado...")
         _logger.info(f"   - external_ref: {external_ref}")
         _logger.info(f"   - order_uuid: {order_uuid}")
 
-        existing_order = (
-            request.env["pos.order"]
-            .sudo()
-            .search(
-                [
-                    ("session_id.config_id", "=", pos_config.id),
-                    ("uuid", "=", order_uuid),
-                ],
-                limit=1,
-            )
+        existing_order = self._find_existing_order(
+            pos_config, external_ref, order_uuid
         )
         if existing_order:
-            print_requested = self._is_print_requested(payload)
-            _logger.warning(
-                f"⚠️  [PDA ORDER] Pedido DUPLICADO detectado: "
-                f"{existing_order.name} (ID: {existing_order.id})"
+            return self._duplicate_response(
+                existing_order, payload, external_ref, timings
             )
-            return _json_response(
-                {
-                    "success": True,
-                    "code": "DUPLICATE",
-                    "message": (
-                        "Ya existe un pedido POS con esa referencia "
-                        f"(id={existing_order.id})."
-                    ),
-                    "order_id": existing_order.id,
-                    "order_name": existing_order.name,
-                    "external_reference": external_ref,
-                    "session_id": existing_order.session_id.id,
-                    "print_requested": print_requested,
-                    "printed": False,
-                    "print_error": (
-                        "Pedido duplicado detectado. "
-                        "No se reimprime automáticamente."
-                    )
-                    if print_requested
-                    else False,
-                },
-                status=200,
-            )
+        timings.mark("lookup")
 
+        defer_invoice = self._is_invoice_deferred()
         _logger.info("📝 [PDA ORDER] Creando nuevo pedido POS...")
         try:
             # Savepoint para garantizar atomicidad: si falla la generación del
@@ -440,7 +437,9 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                     open_session=open_session,
                     order_uuid=order_uuid,
                     external_ref=external_ref,
+                    defer_invoice=defer_invoice,
                 )
+            timings.mark("create")
             _logger.info(
                 "✅ [PDA ORDER] PEDIDO CREADO EXITOSAMENTE: %s (ID: %s)",
                 order.name,
@@ -451,25 +450,66 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             _logger.info(f"   - Usuario: {order.user_id.name} (ID: {order.user_id.id})")
             _logger.info(f"   - Estado: {order.state}")
             _logger.info("=" * 80)
-            # Avisa por el bus a quien tenga abierta la lista de pedidos del
-            # TPV en el backend, para que se refresque sola y muestre este
-            # pedido sin necesidad de recargar la página manualmente.
-            try:
-                pos_config._notify(
-                    "PDA_NEW_ORDER", {"order_id": order.id, "order_name": order.name}
+        except psycopg2.IntegrityError as exc:
+            # Carrera: otra petición con la misma referencia creó el pedido
+            # entre nuestra búsqueda y el INSERT. El savepoint ya se revirtió.
+            existing_order = self._find_existing_order(
+                pos_config, external_ref, order_uuid
+            )
+            if not existing_order:
+                _logger.exception("[PDA ORDER] Error de integridad inesperado.")
+                return _error(
+                    "SERVER_ERROR",
+                    "Error interno al guardar el pedido. Se puede reintentar.",
+                    http_status=500,
                 )
-            except Exception:  # noqa: BLE001 - un fallo aquí no debe romper la venta
-                _logger.exception(
-                    "[PDA ORDER] Error publicando notificación de pedido nuevo "
-                    "en el bus para el pedido %s.",
-                    order.name,
-                )
+            _logger.warning(
+                "[PDA ORDER] Carrera por referencia duplicada %s: %s",
+                external_ref,
+                exc,
+            )
+            return self._duplicate_response(
+                existing_order, payload, external_ref, timings
+            )
         except (ValidationError, UserError) as exc:
             _logger.error(f"❌ [PDA ORDER] Error al crear pedido: {str(exc)}")
             _logger.info("=" * 80)
-            return _error("VALIDATION_ERROR", str(exc), http_status=400)
+            return _error(
+                getattr(exc, "pda_code", "VALIDATION_ERROR"), str(exc), http_status=400
+            )
+
+        if defer_invoice:
+            # El pedido y sus pagos quedan confirmados YA, antes de facturar o
+            # imprimir: nada de lo que ocurra después puede perder la venta.
+            self._commit()
+            timings.mark("commit")
 
         print_requested = self._is_print_requested(payload)
+        if defer_invoice:
+            if print_requested:
+                # El ticket que se imprime ES la factura simplificada, así que
+                # con impresión se factura en el acto (el pedido ya está
+                # confirmado); sin impresión se difiere al cron.
+                order.pda_run_deferred_invoice()
+                self._commit()
+                timings.mark("invoice")
+            else:
+                self._trigger_deferred_invoice_cron()
+
+        # Avisa por el bus a quien tenga abierta la lista de pedidos del
+        # TPV en el backend, para que se refresque sola y muestre este
+        # pedido sin necesidad de recargar la página manualmente.
+        try:
+            pos_config._notify(
+                "PDA_NEW_ORDER", {"order_id": order.id, "order_name": order.name}
+            )
+        except Exception:  # noqa: BLE001 - un fallo aquí no debe romper la venta
+            _logger.exception(
+                "[PDA ORDER] Error publicando notificación de pedido nuevo "
+                "en el bus para el pedido %s.",
+                order.name,
+            )
+
         payment = order.payment_ids[:1]
         response_payload = {
             "success": True,
@@ -479,25 +519,318 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             "order_name": order.name,
             "is_refund": order.amount_total < 0,
             "external_reference": external_ref,
+            "duplicate": False,
             "session_id": order.session_id.id,
             "session_name": order.session_id.name,
             "session_state": order.session_id.state,
             "amount_total": order.amount_total,
             "amount_paid": order.amount_paid,
+            "amount_mismatch": bool(order.pda_amount_mismatch),
             "payment_method_id": payment.payment_method_id.id if payment else False,
             "payment_method_name": payment.payment_method_id.name if payment else False,
             "state": order.state,
             "invoice_id": order.account_move.id if order.account_move else False,
             "invoice_name": order.account_move.name if order.account_move else False,
             "simplified_invoice_number": order.pda_simplified_invoice_number or False,
+            "invoice_pending": order.pda_invoice_state in ("pending", "error"),
             "picking_ids": order.picking_ids.ids,
             "print_requested": print_requested,
             "printed": False,
+            "print_queued": False,
+            "print_error": None,
         }
         if print_requested:
-            response_payload.update(self._dispatch_order_print(order, pos_config))
+            try:
+                response_payload.update(self._dispatch_order_print(order, pos_config))
+            except Exception as exc:  # noqa: BLE001 - la impresión nunca rompe la venta
+                _logger.exception(
+                    "[PDA ORDER] Error imprimiendo el pedido %s.", order.name
+                )
+                response_payload.update({"printed": False, "print_error": str(exc)})
+            timings.mark("print")
 
+        response_payload["timings_ms"] = timings.as_dict()
+        _logger.info(
+            "⏱️ [PDA ORDER] Tiempos (ms) ref=%s: %s",
+            external_ref,
+            response_payload["timings_ms"],
+        )
         return _json_response(response_payload, status=200)
+
+    @staticmethod
+    def _commit():
+        """Confirma la transacción en curso (los tests lo sustituyen)."""
+        request.env.cr.commit()
+
+    @staticmethod
+    def _is_invoice_deferred():
+        """``True`` si la facturación diferida está activada (por defecto no)."""
+        value = (
+            request.env["ir.config_parameter"].sudo().get_param(_DEFER_INVOICE_PARAM)
+        )
+        return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _trigger_deferred_invoice_cron():
+        cron = request.env.ref(
+            "matriz_almonte_pda_sale_import.ir_cron_pda_deferred_invoices",
+            raise_if_not_found=False,
+        )
+        if cron:
+            try:
+                cron.sudo()._trigger()
+            except Exception:  # noqa: BLE001 - el cron periódico lo recogerá
+                _logger.exception("[PDA ORDER] No se pudo disparar el cron de facturas.")
+
+    @staticmethod
+    def _find_existing_order(pos_config, external_ref, order_uuid):
+        """Pedido ya registrado con esa referencia (o uuid) en el TPV."""
+        Order = request.env["pos.order"].sudo()
+        if external_ref:
+            # La referencia es única a nivel de BD: se busca en cualquier TPV.
+            existing = Order.search(
+                [("pda_external_reference", "=", external_ref)], limit=1
+            )
+            if existing:
+                return existing
+        return Order.search(
+            [("session_id.config_id", "=", pos_config.id), ("uuid", "=", order_uuid)],
+            limit=1,
+        )
+
+    def _duplicate_response(self, existing_order, payload, external_ref, timings):
+        """Respuesta idempotente (HTTP 200) para una referencia ya registrada."""
+        print_requested = self._is_print_requested(payload)
+        _logger.warning(
+            f"⚠️  [PDA ORDER] Pedido DUPLICADO detectado: "
+            f"{existing_order.name} (ID: {existing_order.id})"
+        )
+        mismatch = bool(existing_order.pda_amount_mismatch)
+        payload_total = payload.get("amount_total")
+        if payload_total is not None:
+            try:
+                if self._to_cents(payload_total) != self._to_cents(
+                    existing_order.amount_total
+                ):
+                    mismatch = True
+                    _logger.warning(
+                        "[PDA ORDER] Duplicado %s con importe distinto: "
+                        "payload=%s, Odoo=%s.",
+                        external_ref,
+                        payload_total,
+                        existing_order.amount_total,
+                    )
+            except (TypeError, ValueError):
+                pass
+        return _json_response(
+            {
+                "success": True,
+                "code": "DUPLICATE",
+                "message": (
+                    "Ya existe un pedido POS con esa referencia "
+                    f"(id={existing_order.id})."
+                ),
+                "order_id": existing_order.id,
+                "order_name": existing_order.name,
+                "external_reference": external_ref,
+                "duplicate": True,
+                "session_id": existing_order.session_id.id,
+                "amount_total": existing_order.amount_total,
+                "amount_mismatch": mismatch,
+                "invoice_pending": existing_order.pda_invoice_state
+                in ("pending", "error"),
+                "print_requested": print_requested,
+                "printed": False,
+                "print_queued": False,
+                "print_error": (
+                    "Pedido duplicado detectado. No se reimprime automáticamente."
+                )
+                if print_requested
+                else None,
+                "timings_ms": timings.as_dict(),
+            },
+            status=200,
+        )
+
+    @staticmethod
+    def _to_cents(value):
+        return int(round(float(value) * 100))
+
+    # ------------------------------------------------------------------
+    # Conciliación: resumen del día y estado de referencias
+    # ------------------------------------------------------------------
+    _SUMMARY_MAX_REFERENCES = 5000
+    _STATUS_MAX_REFERENCES = 500
+
+    @staticmethod
+    def _request_params():
+        """Parámetros de la petición: querystring + cuerpo JSON (si lo hay)."""
+        params = dict(request.httprequest.args.items())
+        raw = request.httprequest.get_data(as_text=False)
+        if raw:
+            try:
+                body = json.loads(raw.decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                body = None
+            if isinstance(body, dict):
+                params.update(body)
+        return params
+
+    @http.route(
+        _SUMMARY_ROUTE,
+        type="http",
+        auth="none",
+        methods=["GET", "POST"],
+        csrf=False,
+        save_session=False,
+        cors="*",
+    )
+    def pda_pos_summary(self, **kwargs):
+        """Cierre de caja: totales y referencias PDA del día en el TPV del token.
+
+        Solo cuentan los pedidos creados por la PDA (los que tienen
+        ``pda_external_reference``) del TPV asociado al token. El día se
+        interpreta en la zona horaria del usuario de ventas del token.
+        """
+        token_rec, error_response = self._authenticate_token()
+        if error_response:
+            return error_response
+        pos_config = token_rec.tienda_id
+        if not pos_config:
+            return _error(
+                "TOKEN_WITHOUT_POS",
+                "El token no tiene un Punto de Venta POS configurado.",
+                http_status=400,
+            )
+
+        params = self._request_params()
+        tz_name = (
+            token_rec.sale_user_id.tz or pos_config.company_id.partner_id.tz or "UTC"
+        )
+        try:
+            tz = pytz.timezone(tz_name)
+        except pytz.UnknownTimeZoneError:
+            tz = pytz.utc
+        date_str = str(params.get("date") or "").strip()
+        try:
+            day = (
+                fields.Date.from_string(date_str)
+                if date_str
+                else datetime.now(tz).date()
+            )
+            if not day:
+                raise ValueError
+            offset = max(int(params.get("offset") or 0), 0)
+            limit = int(params.get("limit") or self._SUMMARY_MAX_REFERENCES)
+        except (TypeError, ValueError):
+            return _error(
+                "INVALID_PAYLOAD",
+                "Parámetros inválidos: 'date' (YYYY-MM-DD), 'offset' y 'limit'.",
+                http_status=400,
+            )
+        limit = min(max(limit, 1), self._SUMMARY_MAX_REFERENCES)
+
+        start = tz.localize(datetime.combine(day, datetime.min.time()))
+        end = start + timedelta(days=1)
+        # ``date_order`` se guarda en UTC naive.
+        start_utc = start.astimezone(pytz.utc).replace(tzinfo=None)
+        end_utc = end.astimezone(pytz.utc).replace(tzinfo=None)
+
+        Order = request.env["pos.order"].sudo()
+        domain = [
+            ("session_id.config_id", "=", pos_config.id),
+            ("pda_external_reference", "!=", False),
+            ("date_order", ">=", start_utc),
+            ("date_order", "<", end_utc),
+            ("state", "!=", "cancel"),
+        ]
+        orders = Order.search(domain, order="id asc")
+        by_payment = {
+            "cash": {"count": 0, "amount": 0.0},
+            "card": {"count": 0, "amount": 0.0},
+        }
+        for payment in orders.payment_ids:
+            kind = "cash" if payment.payment_method_id.is_cash_count else "card"
+            by_payment[kind]["count"] += 1
+            by_payment[kind]["amount"] += payment.amount
+        for bucket in by_payment.values():
+            bucket["amount"] = round(bucket["amount"], 2)
+        page = orders[offset : offset + limit]
+
+        return _json_response(
+            {
+                "success": True,
+                "code": "OK",
+                "date": day.isoformat(),
+                "count": len(orders),
+                "amount_total": round(sum(orders.mapped("amount_total")), 2),
+                "by_payment": by_payment,
+                "references": page.mapped("pda_external_reference"),
+                "offset": offset,
+                "has_more": offset + limit < len(orders),
+            }
+        )
+
+    @http.route(
+        _STATUS_ROUTE_ORDERS,
+        type="http",
+        auth="none",
+        methods=["POST"],
+        csrf=False,
+        save_session=False,
+        cors="*",
+    )
+    def pda_pos_status(self, **kwargs):
+        """Indica qué referencias PDA existen ya en Odoo (sin reenviarlas)."""
+        token_rec, error_response = self._authenticate_token()
+        if error_response:
+            return error_response
+        pos_config = token_rec.tienda_id
+        if not pos_config:
+            return _error(
+                "TOKEN_WITHOUT_POS",
+                "El token no tiene un Punto de Venta POS configurado.",
+                http_status=400,
+            )
+        references = self._request_params().get("references")
+        if not isinstance(references, list) or not references:
+            return _error(
+                "INVALID_PAYLOAD",
+                "'references' debe ser una lista no vacía.",
+                http_status=400,
+            )
+        if len(references) > self._STATUS_MAX_REFERENCES:
+            return _error(
+                "INVALID_PAYLOAD",
+                f"Máximo {self._STATUS_MAX_REFERENCES} referencias por petición.",
+                http_status=400,
+            )
+        references = [str(ref).strip() for ref in references if str(ref).strip()]
+        orders = (
+            request.env["pos.order"]
+            .sudo()
+            .search(
+                [
+                    ("session_id.config_id", "=", pos_config.id),
+                    ("pda_external_reference", "in", references),
+                ]
+            )
+        )
+        found = {
+            order.pda_external_reference: {
+                "order_id": order.id,
+                "amount_total": order.amount_total,
+            }
+            for order in orders
+        }
+        return _json_response(
+            {
+                "success": True,
+                "code": "OK",
+                "found": found,
+                "missing": [ref for ref in references if ref not in found],
+            }
+        )
 
     def _authenticate_token(self):
         auth_header = request.httprequest.headers.get("Authorization", "")
@@ -782,7 +1115,14 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         return None
 
     def _create_pos_order_from_payload(
-        self, payload, token_rec, pos_config, open_session, order_uuid, external_ref
+        self,
+        payload,
+        token_rec,
+        pos_config,
+        open_session,
+        order_uuid,
+        external_ref,
+        defer_invoice=False,
     ):
         _logger.info("🔄 [PDA ORDER] Resolviendo datos del pedido...")
 
@@ -830,23 +1170,6 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
         #     json.dumps(payload, indent=2, default=str, ensure_ascii=False),
         # )
 
-        # ========== IMPRIMIR JSON RECIBIDO DESDE LA PDA ==========
-        print("*" * 80)
-        print("*" * 80)
-        print("*" * 80)
-        print("*" * 80)
-        print("prueba")
-        print("")
-        print("📥 [PDA ORDER] JSON RECIBIDO DESDE LA PDA:")
-        print("")
-        print(json.dumps(payload, indent=2, default=str, ensure_ascii=False))
-        print("")
-        print("*" * 80)
-        print("*" * 80)
-        print("*" * 80)
-        print("*" * 80)
-        print("")
-
         # Preparar el diccionario de creación del pedido
         order_dict = {
             "name": "/",
@@ -873,28 +1196,6 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             "amount_paid": 0.0,
             "amount_return": 0.0,
         }
-
-        # Imprimir JSON usado para crear el pedido
-        print("*" * 80)
-        print("*" * 80)
-        print("*" * 80)
-        print("*" * 80)
-        print("")
-        print("🔧 [PDA ORDER] JSON USADO PARA CREAR EL PEDIDO EN ODOO:")
-        print("")
-        # Log del JSON usado para crear el pedido
-        order_dict_display = order_dict.copy()
-        order_dict_display["lines"] = f"[{len(line_commands)} líneas de pedido]"
-        # _logger.debug(
-        #     "[PDA ORDER] JSON usado para crear el pedido en Odoo:\n%s",
-        #     json.dumps(order_dict_display, indent=2, default=str, ensure_ascii=False),
-        # )
-        print(json.dumps(order_dict_display, indent=2, default=str, ensure_ascii=False))
-        print("")
-        print("*" * 80)
-        print("*" * 80)
-        print("*" * 80)
-        print("*" * 80)
 
         order_model = (
             request.env["pos.order"].sudo().with_company(open_session.company_id)
@@ -981,8 +1282,9 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
             # En una venta el importe es positivo; en una devolución es
             # negativo. Solo se rechaza el importe cero (no aporta nada).
             if float_is_zero(amount, precision_rounding=order.currency_id.rounding):
-                raise ValidationError(
-                    request.env._("El importe del pago no puede ser cero.")
+                raise _PdaCodedError(
+                    request.env._("El importe del pago no puede ser cero."),
+                    "BAD_PAYMENT",
                 )
             order.add_payment(
                 {
@@ -1016,11 +1318,46 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 )
             order.action_pos_order_paid()
 
-            # Cierre estándar del pedido: albarán de entrega + factura
-            # simplificada (account.move), igual que una venta POS normal.
-            order.matriz_almonte_generate_picking_and_invoice()
+            if defer_invoice:
+                # Albarán + factura simplificada se generan después (ver
+                # ``pos.order.pda_run_deferred_invoice``): el pedido ya
+                # está pagado y confirmado.
+                order.pda_invoice_state = "pending"
+            else:
+                # Cierre estándar del pedido: albarán de entrega + factura
+                # simplificada (account.move), igual que una venta POS normal.
+                order.matriz_almonte_generate_picking_and_invoice()
 
+        self._check_amount_mismatch(order, payload, external_ref)
         return order
+
+    def _check_amount_mismatch(self, order, payload, external_ref):
+        """Contrasta el total de Odoo con el ``amount_total`` de la PDA.
+
+        No rechaza ni altera el pedido: lo marca (``pda_amount_mismatch``) y
+        lo registra en el log para poder conciliarlo.
+        """
+        payload_total = payload.get("amount_total")
+        if payload_total is None:
+            return
+        try:
+            diff_cents = self._to_cents(order.amount_total) - self._to_cents(
+                payload_total
+            )
+        except (TypeError, ValueError):
+            return
+        vals = {"pda_payload_amount_total": float(payload_total)}
+        if diff_cents:
+            vals["pda_amount_mismatch"] = True
+            _logger.warning(
+                "[PDA ORDER] AMOUNT_MISMATCH ref=%s: PDA=%.2f, Odoo=%.2f, "
+                "diferencia=%.2f.",
+                external_ref,
+                float(payload_total),
+                order.amount_total,
+                diff_cents / 100.0,
+            )
+        order.write(vals)
 
 
     @staticmethod
@@ -1129,15 +1466,17 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 limit=1,
             )
         if not product:
-            raise ValidationError(
-                request.env._("No se ha encontrado el producto de una de las líneas.")
+            raise _PdaCodedError(
+                request.env._("No se ha encontrado el producto de una de las líneas."),
+                "UNKNOWN_PRODUCT",
             )
         if not product.active or not product.sale_ok:
-            raise ValidationError(
+            raise _PdaCodedError(
                 request.env._(
                     "El producto '%s' no está activo o no es vendible.",
                     product.display_name,
-                )
+                ),
+                "UNKNOWN_PRODUCT",
             )
         return product
 
@@ -2167,14 +2506,16 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                     )
                     return fallback
             if not payment_method.exists():
-                raise ValidationError(
-                    request.env._("El payment_method_id %s no existe.", method_id)
+                raise _PdaCodedError(
+                    request.env._("El payment_method_id %s no existe.", method_id),
+                    "BAD_PAYMENT",
                 )
-            raise ValidationError(
+            raise _PdaCodedError(
                 request.env._(
                     "El método de pago '%s' no está permitido en este TPV.",
                     payment_method.name,
-                )
+                ),
+                "BAD_PAYMENT",
             )
 
         if kind_hint:
@@ -2182,10 +2523,11 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 selector=kind_hint, open_session=open_session
             )
 
-        raise ValidationError(
+        raise _PdaCodedError(
             request.env._(
                 "Cada pago en 'payments' debe incluir 'payment_method_id'."
-            )
+            ),
+            "BAD_PAYMENT",
         )
 
     @staticmethod
@@ -2377,8 +2719,9 @@ class MatrizAlmontePdaPosOrderController(http.Controller):
                 return payment_methods[1]
             return payment_methods[0]
 
-        raise ValidationError(
+        raise _PdaCodedError(
             request.env._(
                 "No se pudo resolver el método de pago '%s' para este TPV.", selector
-            )
+            ),
+            "BAD_PAYMENT",
         )

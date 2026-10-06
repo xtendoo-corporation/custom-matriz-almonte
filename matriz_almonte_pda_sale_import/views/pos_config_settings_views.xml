@@ -36,6 +36,11 @@
                         </div>
                     </div>
                 </setting>
+                <setting id="pos_pda_defer_invoice"
+                         string="Facturación diferida PDA"
+                         help="Confirma primero el pedido y los pagos de la PDA y genera después la factura simplificada y el albarán. Si falla, el pedido sigue pagado y se reintenta automáticamente. Desactivado = comportamiento anterior.">
+                    <field name="pda_defer_invoice" />
+                </setting>
             </xpath>
         </field>
     </record>

@@ -24,3 +24,11 @@ class ResConfigSettings(models.TransientModel):
         string="Ancho impresora (dots)",
     )
 
+
+    pda_defer_invoice = fields.Boolean(
+        string="Facturación diferida PDA",
+        config_parameter="matriz_almonte_pda_sale_import.defer_invoice",
+        help="Si está activo, el pedido y sus pagos se confirman primero y la "
+        "factura simplificada/albarán se generan después (en el acto si hay "
+        "que imprimir; si no, por un cron con reintentos).",
+    )
