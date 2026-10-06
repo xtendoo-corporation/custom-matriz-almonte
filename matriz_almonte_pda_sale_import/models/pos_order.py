@@ -358,6 +358,19 @@ class PosOrder(models.Model):
             _logger.exception("[PDA ORDER] No se pudo redimensionar el logo del ticket.")
             return logo_b64
 
+    def _get_pos_conventional_qztray_raw_receipt(self):
+        """Quita la marca de depuración «MODO RAW QZ TRAY» del ticket.
+
+        ``pos_conventional_qztray`` la imprime siempre en el pie, entre
+        «Gracias por su visita» y «Atendido por».
+        """
+        receipt = super()._get_pos_conventional_qztray_raw_receipt()
+        if not isinstance(receipt, str):
+            return receipt
+        return "\n".join(
+            line for line in receipt.split("\n") if "MODO RAW QZ TRAY" not in line
+        )
+
     def get_pos_conventional_qztray_raw_payload(self):
         payload = super().get_pos_conventional_qztray_raw_payload()
         if isinstance(payload, dict) and payload.get("logo"):

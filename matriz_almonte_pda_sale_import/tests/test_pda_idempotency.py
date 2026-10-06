@@ -475,3 +475,10 @@ class TestPdaOrderContract(TransactionCase):
         values = {v for v in out.getdata()}
         self.assertLessEqual(values, {0, 255})
         self.assertIn(0, values, "El trazo gris debe imprimirse en negro.")
+
+    def test_28_receipt_has_no_debug_marker(self):
+        data, _ = self._create()
+        order = self.env["pos.order"].browse(data["order_id"])
+        receipt = order.get_pos_conventional_qztray_raw_receipt()
+        self.assertNotIn("MODO RAW QZ TRAY", receipt)
+        self.assertIn("Gracias por su visita", receipt)
