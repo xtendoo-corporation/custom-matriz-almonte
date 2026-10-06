@@ -27,7 +27,10 @@ patch(PosOrderListController.prototype, {
         // bus_service lo usan como clave, así que hace falta guardarlo tal
         // cual para poder darlo de baja al desmontar (una arrow function
         // nueva en cada llamada no se podría desuscribir).
-        this._pdaNewOrderCallback = () => this.model.load();
+        this._pdaMounted = true;
+        this._pdaReloading = false;
+        this._pdaReloadPending = false;
+        this._pdaNewOrderCallback = () => this._pdaReloadList();
         this._pdaNewOrderNotificationTypes = [];
 
         onWillStart(async () => {
@@ -35,6 +38,10 @@ patch(PosOrderListController.prototype, {
         });
 
         onWillUnmount(() => {
+            // A partir de aquí ninguna recarga pendiente debe tocar la lista:
+            // si llega un aviso mientras se cierra la pantalla, el modelo ya
+            // está destruido y recargarlo lanzaba "Component is destroyed".
+            this._pdaMounted = false;
             // No se llama a busService.deleteChannel(): el mismo canal
             // (pos_config.access_token) lo sigue necesitando el servicio de
             // impresión automática (pda_auto_print_service), que vive todo
@@ -44,6 +51,38 @@ patch(PosOrderListController.prototype, {
                 this.busService.unsubscribe(notificationType, this._pdaNewOrderCallback);
             }
         });
+    },
+
+    /**
+     * Recarga la lista sin dejar que un fallo suba como error no capturado.
+     *
+     * - Si la vista ya se cerró, no hace nada.
+     * - Si ya hay una recarga en curso (varias ventas seguidas), no lanza
+     *   otra en paralelo: encadena una sola más al terminar.
+     * - Si la vista se destruye mientras recarga, se ignora el error.
+     */
+    async _pdaReloadList() {
+        if (!this._pdaMounted) {
+            return;
+        }
+        if (this._pdaReloading) {
+            this._pdaReloadPending = true;
+            return;
+        }
+        this._pdaReloading = true;
+        try {
+            await this.model.load();
+        } catch (error) {
+            if (this._pdaMounted) {
+                console.warn("[PDA][NewOrderRefresh] No se pudo recargar la lista", error);
+            }
+        } finally {
+            this._pdaReloading = false;
+            if (this._pdaReloadPending && this._pdaMounted) {
+                this._pdaReloadPending = false;
+                this._pdaReloadList();
+            }
+        }
     },
 
     async _subscribeToPdaNewOrders() {
