@@ -399,11 +399,15 @@ class TestPdaOrderContract(TransactionCase):
         self.assertTrue(action["params"]["raw_receipt"])
         self.assertFalse(action["params"]["print_original_receipt"])
 
-    def test_23_manual_button_unchanged(self):
+    def test_23_manual_button_prints_same_raw_receipt_as_pda(self):
+        # El botón manual del pedido imprime el mismo ticket RAW que la PDA
         order = self._qz_order()
         action = order.action_print_factura_simplificada()
-        self.assertFalse(action["params"]["raw_receipt"])
-        self.assertTrue(action["params"]["print_original_receipt"])
+        self.assertTrue(action["params"]["use_qztray"])
+        self.assertTrue(action["params"]["raw_receipt"])
+        self.assertFalse(action["params"]["print_original_receipt"])
+        pda = order.with_context(pda_raw_receipt=True).action_print_factura_simplificada()
+        self.assertEqual(action, pda)
 
     def test_24_without_qztray_action_untouched(self):
         self.tienda.sudo().pos_print_receipt_with_qztray = False

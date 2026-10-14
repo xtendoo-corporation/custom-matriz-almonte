@@ -378,19 +378,19 @@ class PosOrder(models.Model):
         return payload
 
     def action_print_factura_simplificada(self):
-        """Imprime desde la PDA con el ticket RAW (ESC/POS), no con el PDF.
+        """Imprime siempre el ticket RAW (ESC/POS), el mismo que sale desde la PDA.
 
         ``pos_conventional_qztray`` devuelve ``raw_receipt: False`` para este
         botón, lo que manda el informe como PDF a la impresora. En una cola
-        térmica ``raw`` eso sale como un ticket interminable. El flujo normal
-        del TPV usa el ticket RAW; aquí se fuerza lo mismo, pero solo cuando
-        la llamada viene de la PDA (contexto ``pda_raw_receipt``), para no
-        cambiar el botón manual del formulario del pedido.
+        térmica ``raw`` eso sale como un ticket interminable y con otro formato
+        que el que imprime la PDA. El flujo normal del TPV y la PDA usan el
+        ticket RAW; aquí se fuerza lo mismo también para el botón manual del
+        formulario del pedido. El contexto ``pda_raw_receipt`` se sigue
+        aceptando por compatibilidad, pero ya no es necesario.
         """
         action = super().action_print_factura_simplificada()
         if (
-            self.env.context.get("pda_raw_receipt")
-            and isinstance(action, dict)
+            isinstance(action, dict)
             and action.get("type") == "ir.actions.client"
             and (action.get("params") or {}).get("use_qztray")
         ):
