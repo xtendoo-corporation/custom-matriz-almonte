@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_report_pos_order_search" model="ir.ui.view">
+        <field name="name">report.pos.order.search.payment.tax</field>
+        <field name="model">report.pos.order</field>
+        <field name="inherit_id" ref="point_of_sale.view_report_pos_order_search" />
+        <field name="arch" type="xml">
+            <field name="product_categ_id" position="after">
+                <field name="payment_method_id" />
+                <field name="tax_id" />
+            </field>
+            <filter name="payment_method" position="after">
+                <filter
+                    string="Tax Type"
+                    name="tax"
+                    context="{'group_by': 'tax_id'}"
+                />
+            </filter>
+        </field>
+    </record>
+
+    <record id="report_pos_order_view_tree" model="ir.ui.view">
+        <field name="name">report.pos.order.view.list.payment.tax</field>
+        <field name="model">report.pos.order</field>
+        <field name="inherit_id" ref="point_of_sale.report_pos_order_view_tree" />
+        <field name="arch" type="xml">
+            <field name="price_total" position="before">
+                <field name="payment_method_id" optional="show" />
+                <field name="tax_id" optional="show" />
+                <field name="price_subtotal_excl" optional="show" sum="Total" />
+                <field name="tax_amount" optional="show" sum="Total" />
+            </field>
+            <field name="price_total" position="attributes">
+                <attribute name="sum">Total</attribute>
+            </field>
+        </field>
+    </record>
+</odoo>

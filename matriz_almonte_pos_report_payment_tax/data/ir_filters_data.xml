@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="filter_sales_by_payment_method_date_tax" model="ir.filters">
+        <field name="name">Ventas por método de pago, mes, día e IVA</field>
+        <field name="model_id">report.pos.order</field>
+        <field name="action_id" ref="point_of_sale.action_report_pos_order_all" />
+        <field name="user_ids" eval="False" />
+        <field name="domain">[('state', 'not in', ['cancel'])]</field>
+        <field name="context">{
+            'group_by': ['payment_method_id', 'date:month', 'date:day'],
+            'pivot_row_groupby': ['payment_method_id', 'date:month', 'date:day'],
+            'pivot_column_groupby': ['tax_id'],
+            'pivot_measures': ['price_subtotal_excl', 'tax_amount', 'price_total'],
+        }</field>
+    </record>
+</odoo>
