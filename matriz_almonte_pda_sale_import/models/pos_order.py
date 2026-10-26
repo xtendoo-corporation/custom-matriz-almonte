@@ -367,29 +367,9 @@ class PosOrder(models.Model):
         receipt = super()._get_pos_conventional_qztray_raw_receipt()
         if not isinstance(receipt, str):
             return receipt
-        lines = [
+        return "\n".join(
             line for line in receipt.split("\n") if "MODO RAW QZ TRAY" not in line
-        ]
-        if self.config_id.pda_ticket_cut_mode == "brother_ql":
-            lines = self._pda_brother_ql_lines(lines)
-        return "\n".join(lines)
-
-    @staticmethod
-    def _pda_brother_ql_lines(lines):
-        """Adapta el ticket a una Brother QL (rollo continuo).
-
-        La QL no entiende ESC/POS: ``GS V`` se ignora y, al saltarse el
-        driver con RAW, nadie activa el autocorte. Se quita el corte
-        ESC/POS, se activa el autocorte (``ESC i M`` con el bit 6) justo
-        tras la inicialización y se cierra con Ctrl+Z (imprimir y expulsar).
-        """
-        lines = [line for line in lines if line not in ("\x1bd\x08", "\x1dV\x00")]
-        if lines and lines[0] == "\x1b@":
-            lines.insert(1, "\x1biM\x40")
-        else:
-            lines.insert(0, "\x1biM\x40")
-        lines.append("\x1a")
-        return lines
+        )
 
     def get_pos_conventional_qztray_raw_payload(self):
         payload = super().get_pos_conventional_qztray_raw_payload()

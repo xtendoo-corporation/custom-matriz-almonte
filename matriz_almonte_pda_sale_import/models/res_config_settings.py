@@ -23,11 +23,6 @@ class ResConfigSettings(models.TransientModel):
         readonly=False,
         string="Ancho impresora (dots)",
     )
-    pos_pda_ticket_cut_mode = fields.Selection(
-        related="pos_config_id.pda_ticket_cut_mode",
-        readonly=False,
-        string="Corte del ticket",
-    )
 
 
     pda_defer_invoice = fields.Boolean(
