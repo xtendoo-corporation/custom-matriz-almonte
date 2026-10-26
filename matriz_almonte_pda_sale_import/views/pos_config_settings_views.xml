@@ -34,6 +34,12 @@
                             <field name="pos_pda_ticket_printer_width_dots"
                                    placeholder="576" />
                         </div>
+                        <div class="row mt-2">
+                            <label string="Corte del ticket"
+                                   for="pos_pda_ticket_cut_mode"
+                                   class="col-lg-4 o_light_label" />
+                            <field name="pos_pda_ticket_cut_mode" />
+                        </div>
                     </div>
                 </setting>
                 <setting id="pos_pda_defer_invoice"

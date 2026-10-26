@@ -486,3 +486,14 @@ class TestPdaOrderContract(TransactionCase):
         receipt = order.get_pos_conventional_qztray_raw_receipt()
         self.assertNotIn("MODO RAW QZ TRAY", receipt)
         self.assertIn("Gracias por su visita", receipt)
+
+    def test_29_brother_ql_receipt_autocut(self):
+        data, _ = self._create()
+        order = self.env["pos.order"].browse(data["order_id"])
+        escpos = order.get_pos_conventional_qztray_raw_receipt()
+        self.assertIn("\x1dV\x00", escpos)
+        order.config_id.pda_ticket_cut_mode = "brother_ql"
+        receipt = order.get_pos_conventional_qztray_raw_receipt()
+        self.assertNotIn("\x1dV", receipt)
+        self.assertTrue(receipt.startswith("\x1b@\n\x1biM\x40"))
+        self.assertTrue(receipt.endswith("\x1a"))

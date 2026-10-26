@@ -41,3 +41,17 @@ class PosConfig(models.Model):
         ),
     )
 
+    pda_ticket_cut_mode = fields.Selection(
+        [
+            ("escpos", "Térmica ESC/POS (GS V)"),
+            ("brother_ql", "Brother QL (autocorte)"),
+        ],
+        string="Corte del ticket",
+        default="escpos",
+        help=(
+            "Cómo se ordena el corte del ticket RAW de QZ Tray. "
+            "«Brother QL» no entiende ESC/POS: activa el autocorte con "
+            "ESC i M y cierra el trabajo con Ctrl+Z (imprimir y expulsar). "
+            "Requiere rollo continuo."
+        ),
+    )
