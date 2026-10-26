@@ -367,10 +367,11 @@ class PosOrder(models.Model):
         receipt = super()._get_pos_conventional_qztray_raw_receipt()
         if not isinstance(receipt, str):
             return receipt
-        # «GS V 0» (corte total, con un byte NUL) no corta en algunas
-        # térmicas; «GS V 66 n» avanza el papel y corta sin NUL.
+        # El corte «GS V» solo actúa al principio de línea, pero el indentado
+        # del ticket le antepone espacios y la impresora lo ignora. Se emite
+        # sin indentar y con «GS V 66 n» (avanza el papel y corta, sin NUL).
         return "\n".join(
-            "\x1dV\x42\x10" if line == "\x1dV\x00" else line
+            "\x1dV\x42\x10" if line.lstrip(" ") == "\x1dV\x00" else line
             for line in receipt.split("\n")
             if "MODO RAW QZ TRAY" not in line
         )
