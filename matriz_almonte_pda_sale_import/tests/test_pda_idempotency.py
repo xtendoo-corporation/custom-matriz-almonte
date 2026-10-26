@@ -486,3 +486,10 @@ class TestPdaOrderContract(TransactionCase):
         receipt = order.get_pos_conventional_qztray_raw_receipt()
         self.assertNotIn("MODO RAW QZ TRAY", receipt)
         self.assertIn("Gracias por su visita", receipt)
+
+    def test_29_receipt_cut_is_feed_and_cut(self):
+        data, _ = self._create()
+        order = self.env["pos.order"].browse(data["order_id"])
+        receipt = order.get_pos_conventional_qztray_raw_receipt()
+        self.assertNotIn("\x1dV\x00", receipt)
+        self.assertTrue(receipt.endswith("\x1dV\x42\x10"))

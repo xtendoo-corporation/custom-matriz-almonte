@@ -367,8 +367,12 @@ class PosOrder(models.Model):
         receipt = super()._get_pos_conventional_qztray_raw_receipt()
         if not isinstance(receipt, str):
             return receipt
+        # «GS V 0» (corte total, con un byte NUL) no corta en algunas
+        # térmicas; «GS V 66 n» avanza el papel y corta sin NUL.
         return "\n".join(
-            line for line in receipt.split("\n") if "MODO RAW QZ TRAY" not in line
+            "\x1dV\x42\x10" if line == "\x1dV\x00" else line
+            for line in receipt.split("\n")
+            if "MODO RAW QZ TRAY" not in line
         )
 
     def get_pos_conventional_qztray_raw_payload(self):
