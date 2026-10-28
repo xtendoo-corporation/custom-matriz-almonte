@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="product_category_form_view_reference" model="ir.ui.view">
+        <field name="name">product.category.form.reference</field>
+        <field name="model">product.category</field>
+        <field name="inherit_id" ref="product.product_category_form_view"/>
+        <field name="arch" type="xml">
+            <field name="parent_id" position="after">
+                <field name="product_reference_code" placeholder="p. ej. 01" class="oe_inline"/>
+            </field>
+        </field>
+    </record>
+
+    <record id="product_category_list_view_reference" model="ir.ui.view">
+        <field name="name">product.category.list.reference</field>
+        <field name="model">product.category</field>
+        <field name="inherit_id" ref="product.product_category_list_view"/>
+        <field name="arch" type="xml">
+            <field name="display_name" position="after">
+                <field name="product_reference_code"/>
+            </field>
+        </field>
+    </record>
+
+    <record id="product_category_search_view_reference" model="ir.ui.view">
+        <field name="name">product.category.search.reference</field>
+        <field name="model">product.category</field>
+        <field name="inherit_id" ref="product.product_category_search_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//search" position="inside">
+                <field name="product_reference_code"/>
+                <filter name="filter_without_reference" string="Sin referencia"
+                        domain="[('product_reference_code', '=', False)]"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>
