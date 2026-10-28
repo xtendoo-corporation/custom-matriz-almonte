@@ -11,7 +11,7 @@
     "author": "Xtendoo",
     "website": "https://www.xtendoo.es",
     "license": "LGPL-3",
-    "depends": ["product", "account"],
+    "depends": ["product", "account", "base_report_to_printer_qztray"],
     "data": [
         "security/ir.model.access.csv",
         "report/report_paperformat.xml",
@@ -21,6 +21,11 @@
         "views/product_template_views.xml",
         "views/product_product_views.xml",
     ],
+    "assets": {
+        "web.assets_backend": [
+            "matriz_almonte_product_label/static/src/js/qz_label_print.esm.js",
+        ],
+    },
     "installable": True,
     "application": False,
     "auto_install": False,

@@ -56,55 +56,28 @@ sale reducida y el código de barras sale dentado.
 Configuración con QZ Tray
 =========================
 
-Si se imprime con `QZ Tray <https://qz.io/>`_ usando la app/extensión
-que **sustituye el diálogo de impresión del navegador** (el caso más
-habitual: no hay ningún script que llame a ``qz.print()`` con una
-configuración propia, simplemente se imprime el PDF como siempre y
-QZ Tray reenvía el trabajo a la impresora física), el tamaño de página
-y la escala **NO** los controla QZ Tray, sino:
+El módulo depende de ``base_report_to_printer_qztray``. Ese módulo manda el
+PDF a QZ Tray **sin indicar tamaño de papel**, así que QZ imprime en el papel
+por defecto de la cola/driver y reescala la etiqueta (sale pequeña y
+descentrada). Para evitarlo, ``static/src/js/qz_label_print.esm.js`` envuelve
+el dispatcher de QZ y, **solo para los dos informes de etiquetas**, pasa a
+QZ papel de 56 x 29 mm, sin escalado, márgenes ``top 3 / left 2`` mm y 300 dpi.
+Así no hay que configurar el papel por defecto en cada equipo.
 
-1. El **driver de Windows** de la Brother QL-700 (el tamaño de "media"/
-   papel configurado para esa cola de impresión).
-2. Las opciones elegidas en el **diálogo de impresión del navegador**
-   (tamaño de papel, escala, márgenes) en el momento de imprimir.
+Requisitos en el equipo que imprime:
 
-Si ese tamaño de página no es el indicado arriba (29 x 56 mm), el PDF (que sí
-declara correctamente 50 x 25 mm) se "estampa" dentro de una página de
-otro tamaño (p. ej. Carta/A4 o una plantilla Brother distinta como el
-rollo continuo DK-22205 de 62 mm), y el resultado impreso se ve
-reducido y desplazado hacia una esquina/lado, aunque el PDF en sí sea
-correcto. **Esto ocurre igual en las dos etiquetas** porque ambas
-comparten el mismo tamaño de página (``paperformat_brother_ql700``): el
-problema no está en el contenido de cada plantilla, sino en la
-configuración de impresión.
+1. QZ Tray en marcha y la impresora de Odoo (*Ajustes > Imprimiendo >
+   Impresoras*) con **el mismo nombre** que la cola o el driver local
+   (QZ busca por nombre): en Windows suele ser ``Brother QL-700``; en Linux
+   CUPS no admite espacios, p. ej. ``QL-700``.
+2. El informe de etiquetas con acción ``Send to Printer`` (por defecto o
+   como acción específica del usuario).
+3. Soporte continuo de 29 mm y el corte automático tras cada etiqueta
+   (``CutLabel=1`` en CUPS; en Windows, *Preferencias de impresión*).
 
-**Pasos a seguir en Windows:**
-
-1. *Panel de control > Dispositivos e impresoras* → clic derecho sobre
-   **Brother QL-700** → **Preferencias de impresión**.
-2. En la pestaña **Básico**, en "Tamaño de papel", elegir
-   **Definido por el usuario / Custom** y crear un tamaño nuevo de
-   **29 mm x 56 mm** (ancho x alto). Guardarlo con un nombre
-   identificable (p. ej. "Etiqueta 29x56").
-3. Seleccionar ese tamaño personalizado y pulsar **Aceptar**. Es
-   importante hacerlo desde *Dispositivos e impresoras* (propiedades del
-   documento predeterminado del driver), no solo desde el diálogo de
-   impresión de una aplicación, para que quede como valor por defecto
-   de la cola y lo respete también QZ Tray.
-4. Desactivar cualquier casilla de "Ajustar al papel" / "Auto cortar
-   con margen extra" / "Escalar" que fuerce un tamaño distinto.
-5. Si se dispone de la **Brother Printer Setting Tool**, se puede crear
-   /verificar el mismo tamaño personalizado desde ahí también.
-6. Al imprimir el PDF (Ctrl+P o el botón de imprimir de QZ Tray), en el
-   diálogo del navegador verificar: tamaño de papel = 29 x 56 mm (o el
-   nombre dado al tamaño personalizado), escala = **100% / Tamaño real**
-   (nunca "Ajustar al tamaño del papel"), márgenes = **Ninguno**.
-
-**Prueba de diagnóstico:** imprima el mismo PDF generado por Odoo
-directamente con "Microsoft Print to PDF" o ábralo con un lector y
-compruebe que el contenido ocupa el 100% de la página de 50 x 25 mm (si
-es así, el PDF está bien y el ajuste pendiente es únicamente el del
-driver/cola de impresión descrito arriba).
+Los márgenes se calibraron en Linux/CUPS con ``ptouch-ql``. Si en el driver de
+Windows el contenido sale desplazado, hay que ajustar ``margins`` en
+``LABEL_QZ_OPTIONS``.
 
 Si en cambio existe una integración por script que llama a
 ``qz.print()`` directamente (sin pasar por el diálogo del navegador),
