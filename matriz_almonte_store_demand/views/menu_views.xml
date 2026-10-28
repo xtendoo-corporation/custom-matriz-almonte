@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <menuitem id="menu_store_demand_root" name="Pre-pedidos" sequence="45"
+              web_icon="matriz_almonte_store_demand,static/description/icon.png"
+              groups="group_store_demand_user"/>
+
+    <menuitem id="menu_store_demand" name="Pre-pedidos" sequence="10"
+              parent="menu_store_demand_root" action="action_store_demand"/>
+
+    <menuitem id="menu_store_demand_line_pending" name="Demanda pendiente" sequence="20"
+              parent="menu_store_demand_root" action="action_store_demand_line_pending"
+              groups="group_store_demand_manager"/>
+
+    <menuitem id="menu_store_demand_consolidate" name="Consolidar demanda" sequence="30"
+              parent="menu_store_demand_root" action="action_server_store_demand_consolidate"
+              groups="group_store_demand_manager"/>
+
+    <menuitem id="menu_store_demand_config" name="Configuración" sequence="90"
+              parent="menu_store_demand_root" groups="group_store_demand_manager"/>
+
+    <menuitem id="menu_store_demand_warehouse" name="Almacenes y tiendas" sequence="10"
+              parent="menu_store_demand_config" action="action_store_demand_warehouse"
+              groups="stock.group_stock_manager"/>
+</odoo>

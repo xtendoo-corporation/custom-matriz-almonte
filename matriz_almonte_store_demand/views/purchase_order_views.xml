@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="purchase_order_form_store_demand" model="ir.ui.view">
+        <field name="name">purchase.order.form.store.demand</field>
+        <field name="model">purchase.order</field>
+        <field name="inherit_id" ref="purchase.purchase_order_form"/>
+        <field name="arch" type="xml">
+            <div name="button_box" position="inside">
+                <button name="action_view_store_demands" type="object" class="oe_stat_button"
+                        icon="fa-shopping-basket" invisible="not store_demand_count"
+                        groups="matriz_almonte_store_demand.group_store_demand_manager">
+                    <field name="store_demand_count" widget="statinfo" string="Pre-pedidos"/>
+                </button>
+            </div>
+        </field>
+    </record>
+</odoo>

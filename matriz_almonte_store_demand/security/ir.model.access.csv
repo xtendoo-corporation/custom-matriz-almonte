@@ -1,0 +1,7 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_store_demand_user,matriz.store.demand.user,model_matriz_store_demand,group_store_demand_user,1,1,1,1
+access_store_demand_line_user,matriz.store.demand.line.user,model_matriz_store_demand_line,group_store_demand_user,1,1,1,1
+access_store_demand_manager,matriz.store.demand.manager,model_matriz_store_demand,group_store_demand_manager,1,1,1,1
+access_store_demand_line_manager,matriz.store.demand.line.manager,model_matriz_store_demand_line,group_store_demand_manager,1,1,1,1
+access_store_demand_consolidate_manager,matriz.store.demand.consolidate.manager,model_matriz_store_demand_consolidate,group_store_demand_manager,1,1,1,1
+access_store_demand_consolidate_line_manager,matriz.store.demand.consolidate.line.manager,model_matriz_store_demand_consolidate_line,group_store_demand_manager,1,1,1,1

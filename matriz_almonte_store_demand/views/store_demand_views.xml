@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_store_demand_form" model="ir.ui.view">
+        <field name="name">matriz.store.demand.form</field>
+        <field name="model">matriz.store.demand</field>
+        <field name="arch" type="xml">
+            <form string="Pre-pedido de tienda">
+                <header>
+                    <button name="action_send" type="object" string="Enviar a central"
+                            class="btn-primary" invisible="state != 'draft'"/>
+                    <button name="action_draft" type="object" string="Volver a borrador"
+                            invisible="state not in ('sent', 'cancel')"/>
+                    <button name="action_cancel" type="object" string="Cancelar"
+                            invisible="state not in ('draft', 'sent')"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,sent,consolidated,done"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_purchases" type="object" class="oe_stat_button"
+                                icon="fa-shopping-cart" invisible="not purchase_count"
+                                groups="purchase.group_purchase_user">
+                            <field name="purchase_count" widget="statinfo" string="Compras"/>
+                        </button>
+                        <button name="action_view_pickings" type="object" class="oe_stat_button"
+                                icon="fa-truck" invisible="not picking_count"
+                                groups="stock.group_stock_user">
+                            <field name="picking_count" widget="statinfo" string="Traspasos"/>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <h1><field name="name"/></h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="warehouse_id" options="{'no_create': True}"
+                                   readonly="state != 'draft'"/>
+                            <field name="central_warehouse_id" options="{'no_create': True}"
+                                   readonly="state != 'draft'"
+                                   groups="matriz_almonte_store_demand.group_store_demand_manager"/>
+                            <field name="user_id" readonly="state != 'draft'"/>
+                        </group>
+                        <group>
+                            <field name="date_request" readonly="state != 'draft'"/>
+                            <field name="date_expected" readonly="state not in ('draft', 'sent')"/>
+                            <field name="company_id" groups="base.group_multi_company"
+                                   readonly="state != 'draft'"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Productos" name="lines">
+                            <field name="line_ids" readonly="state not in ('draft', 'sent')"
+                                   context="{'default_demand_id': id}">
+                                <list editable="bottom">
+                                    <field name="sequence" widget="handle"/>
+                                    <field name="product_id" options="{'no_create': True}"
+                                           readonly="is_consolidated"/>
+                                    <field name="note" optional="hide"/>
+                                    <field name="shop_qty_available" optional="show"/>
+                                    <field name="central_free_qty" optional="show"/>
+                                    <field name="product_qty" readonly="is_consolidated"/>
+                                    <field name="product_uom_id" groups="uom.group_uom"/>
+                                    <field name="partner_id" optional="show"
+                                           readonly="is_consolidated"
+                                           groups="matriz_almonte_store_demand.group_store_demand_manager"/>
+                                    <field name="is_consolidated" column_invisible="True"/>
+                                </list>
+                            </field>
+                            <group class="oe_subtotal_footer">
+                                <field name="line_count"/>
+                                <field name="total_qty"/>
+                            </group>
+                        </page>
+                        <page string="Observaciones" name="note">
+                            <field name="note" placeholder="Indicaciones para central..."/>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_store_demand_list" model="ir.ui.view">
+        <field name="name">matriz.store.demand.list</field>
+        <field name="model">matriz.store.demand</field>
+        <field name="arch" type="xml">
+            <list string="Pre-pedidos de tienda"
+                  decoration-info="state == 'draft'"
+                  decoration-warning="state == 'sent'"
+                  decoration-muted="state == 'cancel'"
+                  decoration-success="state == 'done'">
+                <field name="name"/>
+                <field name="date_request"/>
+                <field name="warehouse_id"/>
+                <field name="user_id" optional="show"/>
+                <field name="date_expected" optional="show"/>
+                <field name="line_count"/>
+                <field name="total_qty" optional="hide"/>
+                <field name="company_id" groups="base.group_multi_company" optional="hide"/>
+                <field name="state" widget="badge"
+                       decoration-info="state == 'draft'"
+                       decoration-warning="state == 'sent'"
+                       decoration-primary="state == 'consolidated'"
+                       decoration-success="state == 'done'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_store_demand_search" model="ir.ui.view">
+        <field name="name">matriz.store.demand.search</field>
+        <field name="model">matriz.store.demand</field>
+        <field name="arch" type="xml">
+            <search string="Pre-pedidos de tienda">
+                <field name="name"/>
+                <field name="warehouse_id"/>
+                <field name="user_id"/>
+                <field name="line_ids" string="Producto" filter_domain="[('line_ids.product_id', 'ilike', self)]"/>
+                <filter name="filter_draft" string="Borrador" domain="[('state', '=', 'draft')]"/>
+                <filter name="filter_sent" string="Enviados" domain="[('state', '=', 'sent')]"/>
+                <filter name="filter_consolidated" string="Consolidados" domain="[('state', '=', 'consolidated')]"/>
+                <filter name="filter_done" string="Servidos" domain="[('state', '=', 'done')]"/>
+                <separator/>
+                <filter name="filter_my" string="Mis pre-pedidos" domain="[('user_id', '=', uid)]"/>
+                <filter name="filter_date_request" string="Fecha" date="date_request"/>
+                <group>
+                    <filter name="group_warehouse" string="Tienda" context="{'group_by': 'warehouse_id'}"/>
+                    <filter name="group_state" string="Estado" context="{'group_by': 'state'}"/>
+                    <filter name="group_date" string="Fecha" context="{'group_by': 'date_request:week'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_store_demand" model="ir.actions.act_window">
+        <field name="name">Pre-pedidos de tienda</field>
+        <field name="res_model">matriz.store.demand</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_store_demand_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Crea el primer pre-pedido de tu tienda</p>
+            <p>Añade los productos que necesitas y pulsa «Enviar a central». Central
+               agrupará la demanda de todas las tiendas en un único pedido por proveedor.</p>
+        </field>
+    </record>
+</odoo>
