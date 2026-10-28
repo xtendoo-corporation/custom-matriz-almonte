@@ -3,13 +3,16 @@ import json
 from unittest.mock import patch
 from uuid import uuid4
 
+from odoo import Command
+from odoo.tests import Form
+from odoo.tests.common import TransactionCase, tagged
+
 from odoo.addons.matriz_almonte_pda_sale_import.controllers import (
     pda_pos_order_controller as pos_mod,
 )
 from odoo.addons.matriz_almonte_pda_sale_import.tests.test_pda_sale_import import (
     _FakeRequest,
 )
-from odoo.tests.common import TransactionCase, tagged
 
 from ..controllers import pda_store_demand_controller as mod
 
@@ -82,7 +85,7 @@ class TestPdaStoreDemand(TransactionCase):
             "id_proveedor": self.supplier.id,
             "nota": "urgente <b>",
             "lineas": [
-                {"id_articulo": self.product.id, "unidades": 3},
+                {"id_articulo": self.product.id, "unidades": 3, "stock_tienda": 1},
                 {"id_articulo": self.product.id, "unidades": 2},
             ],
         }
@@ -123,7 +126,11 @@ class TestPdaStoreDemand(TransactionCase):
         ], nota=""))
         self.assertEqual(status, 200, data)
         self.assertEqual(
-            [warning["id_articulo"] for warning in data["avisos"]], [self.unlinked.id]
+            [
+                warning["id_articulo"] for warning in data["avisos"]
+                if warning["mensaje"] == mod._NO_SELLER_WARNING
+            ],
+            [self.unlinked.id],
         )
         order = self._order(data)
         self.assertFalse(order.note)
@@ -156,6 +163,7 @@ class TestPdaStoreDemand(TransactionCase):
             self._payload(lineas=["no-dict"]),
             self._payload(lineas=[{"id_articulo": 99999999, "unidades": 1}]),
             self._payload(lineas=[{"id_articulo": self.no_purchase.id, "unidades": 1}]),
+            self._payload(lineas=[{"id_articulo": self.product.id, "unidades": float("nan")}]),
         ):
             data, status = self._call(payload)
             self.assertEqual(status, 400, data)
@@ -218,3 +226,127 @@ class TestPdaStoreDemand(TransactionCase):
             data, status = self._call(payload, auth=False)
             self.assertEqual(status, 401)
             self.assertEqual(data["code"], "MISSING_TOKEN")
+
+    def _line(self, data, product=None):
+        return self._order(data).order_line.filtered(
+            lambda line: line.product_id == (product or self.product)
+        )
+
+    def _stock_warning_ids(self, data):
+        return [
+            warning["id_articulo"] for warning in data["avisos"]
+            if warning["mensaje"] == mod._NO_SHOP_STOCK_WARNING
+        ]
+
+    def test_shop_stock_is_stored(self):
+        data, status = self._call(self._payload(lineas=[
+            {"id_articulo": self.product.id, "unidades": 2.5, "stock_tienda": 3},
+        ]))
+        self.assertEqual(status, 200, data)
+        line = self._line(data)
+        self.assertEqual(line.shop_stock_qty, 3)
+        self.assertTrue(line.shop_stock_reported)
+        self.assertEqual(line.product_qty, 2.5)
+        self.assertEqual(line.price_unit, 4.5)
+        self.assertEqual(self._stock_warning_ids(data), [])
+        self.assertTrue(self._order(data).message_ids.filtered(
+            lambda msg: "Vela PDA: pide 2.5, en tienda 3" in str(msg.body)
+        ))
+
+    def test_shop_stock_zero_is_reported(self):
+        data, status = self._call(self._payload(lineas=[
+            {"id_articulo": self.product.id, "unidades": 1, "stock_tienda": 0},
+        ]))
+        self.assertEqual(status, 200, data)
+        line = self._line(data)
+        self.assertEqual(line.shop_stock_qty, 0)
+        self.assertTrue(line.shop_stock_reported)
+        self.assertEqual(self._stock_warning_ids(data), [])
+        self.assertTrue(self._order(data).message_ids.filtered(
+            lambda msg: "pide 1, en tienda 0" in str(msg.body)
+        ))
+
+    def test_missing_shop_stock_is_warning(self):
+        data, status = self._call(self._payload(lineas=[
+            {"id_articulo": self.product.id, "unidades": 1, "stock_tienda": None},
+            {"id_articulo": self.unlinked.id, "unidades": 1, "stock_tienda": "4"},
+        ]))
+        self.assertEqual(status, 200, data)
+        line = self._line(data)
+        self.assertFalse(line.shop_stock_reported)
+        self.assertEqual(self._stock_warning_ids(data), [self.product.id])
+        self.assertEqual(self._line(data, self.unlinked).shop_stock_qty, 4)
+        self.assertTrue(self._order(data).message_ids.filtered(
+            lambda msg: "Vela PDA: pide 1, en tienda sin indicar" in str(msg.body)
+        ))
+
+    def test_rejects_invalid_shop_stock(self):
+        for value in (-1, "abc", True, [], float("inf"), float("nan")):
+            data, status = self._call(self._payload(lineas=[
+                {"id_articulo": self.product.id, "unidades": 1, "stock_tienda": value},
+            ]))
+            self.assertEqual(status, 400, (value, data))
+            self.assertEqual(data["code"], "INVALID_DEMAND")
+            self.assertIn(str(self.product.id), data["message"])
+
+    def test_repeated_product_uses_reported_shop_stock(self):
+        data, status = self._call(self._payload(lineas=[
+            {"id_articulo": self.product.id, "unidades": 2, "stock_tienda": 7},
+            {"id_articulo": self.product.id, "unidades": 3},
+        ]))
+        self.assertEqual(status, 200, data)
+        line = self._line(data)
+        self.assertEqual(len(line), 1)
+        self.assertEqual(line.product_qty, 5)
+        self.assertEqual(line.shop_stock_qty, 7)
+        self.assertTrue(line.shop_stock_reported)
+
+    def test_repeated_product_last_reported_stock_wins(self):
+        data, _status = self._call(self._payload(lineas=[
+            {"id_articulo": self.product.id, "unidades": 2, "stock_tienda": 7},
+            {"id_articulo": self.product.id, "unidades": 3, "stock_tienda": 4},
+        ]))
+        self.assertEqual(self._line(data).shop_stock_qty, 4)
+
+    def test_duplicate_does_not_update_shop_stock(self):
+        payload = self._payload(lineas=[
+            {"id_articulo": self.product.id, "unidades": 2, "stock_tienda": 3},
+        ])
+        first, _status = self._call(payload)
+        payload["lineas"][0]["stock_tienda"] = 9
+        payload["lineas"][0]["unidades"] = 8
+        second, status = self._call(payload)
+        self.assertEqual(status, 200)
+        self.assertEqual(second["code"], "DUPLICATE")
+        self.assertEqual(second["order_id"], first["order_id"])
+        line = self._line(first)
+        self.assertEqual((line.product_qty, line.shop_stock_qty), (2, 3))
+
+    def test_manual_shop_stock_edits(self):
+        order = self.env["purchase.order"].create({
+            "partner_id": self.supplier.id,
+            "order_line": [
+                Command.create({"product_id": self.product.id, "product_qty": 1}),
+                Command.create({
+                    "product_id": self.unlinked.id, "product_qty": 1, "shop_stock_qty": 2,
+                }),
+            ],
+        })
+        manual, with_stock = order.order_line
+        self.assertFalse(manual.shop_stock_reported)
+        self.assertTrue(with_stock.shop_stock_reported)
+        manual.shop_stock_qty = 0
+        self.assertTrue(manual.shop_stock_reported)
+        self.assertFalse(manual.copy({"order_id": order.id}).shop_stock_reported)
+
+    def test_purchase_form_shows_shop_stock(self):
+        order = self.env["purchase.order"].create({"partner_id": self.supplier.id})
+        arch = order.get_views([(False, "form")])["views"]["form"]["arch"]
+        self.assertIn('name="shop_stock_qty"', arch)
+        with Form(order) as order_form:
+            with order_form.order_line.new() as line:
+                line.product_id = self.product
+                line.product_qty = 2
+                line.shop_stock_qty = 6
+        self.assertEqual(order.order_line.shop_stock_qty, 6)
+        self.assertTrue(order.order_line.shop_stock_reported)

@@ -10,6 +10,19 @@
             <field name="dest_warehouse_id" position="after">
                 <field name="pda_uuid" invisible="not pda_uuid"/>
             </field>
+            <xpath expr="//field[@name='order_line']/list/field[@name='product_qty']"
+                   position="after">
+                <field name="shop_stock_reported" column_invisible="True"/>
+                <field name="shop_stock_qty" optional="show"
+                       decoration-muted="not shop_stock_reported"
+                       readonly="is_downpayment"
+                       groups="purchase.group_purchase_user"/>
+            </xpath>
+            <xpath expr="//field[@name='order_line']/form//field[@name='product_qty']"
+                   position="after">
+                <field name="shop_stock_qty" groups="purchase.group_purchase_user"/>
+                <field name="shop_stock_reported" groups="purchase.group_purchase_user"/>
+            </xpath>
         </field>
     </record>
 </odoo>

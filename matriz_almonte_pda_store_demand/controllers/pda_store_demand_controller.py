@@ -3,6 +3,7 @@
 
 import json
 import logging
+import math
 
 from markupsafe import Markup, escape
 
@@ -21,6 +22,7 @@ _MAX_LINES = 500
 _NO_SELLER_WARNING = (
     "El artículo no tiene asignado este proveedor; central revisará el precio."
 )
+_NO_SHOP_STOCK_WARNING = "No se indicó el stock actual de la tienda."
 
 
 def _json_response(data, status=200):
@@ -125,7 +127,7 @@ class MatrizAlmontePdaStoreDemandController(http.Controller):
             return error_response
 
         try:
-            quantities = self._prepare_lines(payload.get("lineas"))
+            lines = self._prepare_lines(payload.get("lineas"))
             note = str(payload.get("nota") or "").strip()
             with request.env.cr.savepoint():
                 order = order_model.create({
@@ -136,12 +138,18 @@ class MatrizAlmontePdaStoreDemandController(http.Controller):
                     "origin": "PDA %s" % (pos_config.name or token_rec.name),
                     "note": note or False,
                     "order_line": [
-                        Command.create({"product_id": product.id, "product_qty": qty})
-                        for product, qty in quantities
+                        Command.create({
+                            "product_id": product.id,
+                            "product_qty": qty,
+                            "shop_stock_qty": shop_stock or 0.0,
+                            "shop_stock_reported": shop_stock is not None,
+                        })
+                        for product, qty, shop_stock in lines
                     ],
                 })
-                warnings = self._seller_warnings(order)
-                self._post_creation_message(order, token_rec, note, warnings)
+                seller_warnings = self._seller_warnings(order)
+                self._post_creation_message(order, token_rec, note, seller_warnings)
+                warnings = seller_warnings + self._shop_stock_warnings(order)
         except (UserError, ValidationError) as exc:
             _logger.warning("PDA pedido %s rechazado: %s", uuid, exc)
             return _error("INVALID_DEMAND", str(exc.args[0] if exc.args else exc))
@@ -203,16 +211,43 @@ class MatrizAlmontePdaStoreDemandController(http.Controller):
         return warnings
 
     @staticmethod
-    def _post_creation_message(order, token_rec, note, warnings):
+    def _shop_stock_warnings(order):
+        return [
+            {
+                "id_articulo": line.product_id.id,
+                "nombre": line.product_id.display_name,
+                "mensaje": _NO_SHOP_STOCK_WARNING,
+            }
+            for line in order.order_line
+            if not line.shop_stock_reported
+        ]
+
+    @staticmethod
+    def _format_qty(qty):
+        return ("%.3f" % qty).rstrip("0").rstrip(".")
+
+    @classmethod
+    def _post_creation_message(cls, order, token_rec, note, seller_warnings):
         body = Markup("Pedido creado desde la PDA <b>%s</b> para la tienda <b>%s</b>.") % (
             token_rec.name,
             order.dest_warehouse_id.name,
         )
         if note:
             body += Markup("<br/>Nota de la tienda: %s") % note
-        if warnings:
+        line_items = Markup("").join(
+            Markup("<li>%s: pide %s, en tienda %s</li>") % (
+                line.product_id.display_name,
+                cls._format_qty(line.product_qty),
+                cls._format_qty(line.shop_stock_qty)
+                if line.shop_stock_reported else "sin indicar",
+            )
+            for line in order.order_line
+        )
+        body += Markup("<ul>%s</ul>") % line_items
+        if seller_warnings:
             items = Markup("").join(
-                Markup("<li>%s</li>") % escape(warning["nombre"]) for warning in warnings
+                Markup("<li>%s</li>") % escape(warning["nombre"])
+                for warning in seller_warnings
             )
             body += Markup(
                 "<br/>Artículos sin este proveedor asignado (revisar precio):<ul>%s</ul>"
@@ -254,22 +289,55 @@ class MatrizAlmontePdaStoreDemandController(http.Controller):
         return payload, None
 
     @staticmethod
-    def _prepare_lines(lines):
-        """Agrupa por producto y valida; devuelve ``[(product, qty), ...]``."""
+    def _parse_shop_stock(line, product_id):
+        """Devuelve el stock de tienda de la línea, o ``None`` si no se indicó.
+
+        ``0`` es un valor válido y distinto de "no indicado"; ``null`` se trata
+        como no indicado.
+        """
+        value = line.get("stock_tienda")
+        if value is None:
+            return None
+        error = ValidationError(
+            "Stock de tienda no válido para el artículo %s: debe ser un número "
+            "mayor o igual que cero." % product_id
+        )
+        if isinstance(value, bool):
+            raise error
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            raise error
+        if not math.isfinite(value) or value < 0:
+            raise error
+        return value
+
+    @classmethod
+    def _prepare_lines(cls, lines):
+        """Agrupa por producto y valida; devuelve ``[(product, qty, stock), ...]``.
+
+        Las unidades de un mismo artículo se suman. El stock de tienda NO se
+        suma (es el mismo stock físico informado varias veces): se usa el de la
+        última línea que lo indique, o ``None`` si ninguna lo hace.
+        """
         if not isinstance(lines, list) or not lines:
             raise ValidationError("El pedido no tiene líneas.")
         if len(lines) > _MAX_LINES:
             raise ValidationError("Demasiadas líneas (máximo %s)." % _MAX_LINES)
         quantities = {}
+        shop_stocks = {}
         for line in lines:
             try:
                 product_id = int(line.get("id_articulo"))
                 qty = float(line.get("unidades"))
             except (AttributeError, TypeError, ValueError):
                 raise ValidationError("Línea con artículo o unidades no válidos.")
-            if qty <= 0:
+            if not math.isfinite(qty) or qty <= 0:
                 raise ValidationError("Las unidades deben ser mayores que cero.")
             quantities[product_id] = quantities.get(product_id, 0.0) + qty
+            shop_stock = cls._parse_shop_stock(line, product_id)
+            if shop_stock is not None:
+                shop_stocks[product_id] = shop_stock
         products = request.env["product.product"].browse(list(quantities)).exists()
         missing = set(quantities) - set(products.ids)
         if missing:
@@ -283,5 +351,6 @@ class MatrizAlmontePdaStoreDemandController(http.Controller):
                 % ", ".join(not_purchasable.mapped("display_name"))
             )
         return [
-            (products.browse(product_id), qty) for product_id, qty in quantities.items()
+            (products.browse(product_id), qty, shop_stocks.get(product_id))
+            for product_id, qty in quantities.items()
         ]
