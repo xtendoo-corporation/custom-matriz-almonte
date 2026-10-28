@@ -35,7 +35,7 @@
                     <meta charset="utf-8" />
                     <style type="text/css">
                         @page {
-                            size: 50mm 29mm;
+                            size: 50mm 25mm;
                             margin: 0;
                         }
                         * {
@@ -49,83 +49,60 @@
                            compatibilidad con el motor WebKit de wkhtmltopdf,
                            que gestiona mal flexbox combinado con saltos de
                            página en páginas de tamaño tan reducido
-                           (50 x 29 mm). */
+                           (50 x 25 mm). */
                         .label {
                             position: relative;
                             width: 50mm;
-                            height: 29mm;
+                            height: 25mm;
                             overflow: hidden;
                             font-family: Arial, Helvetica, sans-serif;
                             color: #000000;
                         }
-                        /* 1. Nombre del producto: primera línea, arriba de
-                           todo. "top" con un pequeño margen (en vez de
-                           pegado al borde) porque la Brother QL-700 tiene
-                           un margen automático de no-impresión al inicio
-                           de cada etiqueta. */
+                        /* Todo centrado horizontalmente. La QL-700 deja ~1,5 mm de
+                           margen no imprimible por lado y ~3 mm en los
+                           extremos de la cinta; la etiqueta (50 x 25 mm)
+                           es el área útil, por eso no se añaden más
+                           márgenes arriba/abajo. */
                         .label-name {
                             position: absolute;
-                            top: 2mm;
-                            left: 1mm;
-                            right: 1mm;
-                            height: 6mm;
+                            top: 1mm;
+                            left: 1.5mm;
+                            right: 1.5mm;
                             font-size: 8.5pt;
                             font-weight: bold;
-                            line-height: 1.15;
-                            text-align: left;
+                            text-align: center;
+                            white-space: nowrap;
                             overflow: hidden;
-                            display: -webkit-box;
-                            -webkit-box-orient: vertical;
-                            -webkit-line-clamp: 2;
                             text-overflow: ellipsis;
                         }
-                        /* línea separadora sutil entre el nombre y el resto,
-                           alineada al mismo margen izquierdo que el resto de
-                           elementos (en vez de centrada). */
-                        .label-divider {
-                            position: absolute;
-                            top: 8.3mm;
-                            left: 1mm;
-                            right: 1mm;
-                            height: 0;
-                            border-top: 0.4pt solid #444444;
-                        }
-                        /* 2. Precio de venta con IVA incluido */
                         .label-price {
                             position: absolute;
-                            top: 8.6mm;
-                            left: 1mm;
-                            right: 1mm;
-                            height: 5.5mm;
-                            font-size: 14.5pt;
+                            top: 5mm;
+                            left: 1.5mm;
+                            right: 1.5mm;
+                            font-size: 14pt;
                             font-weight: bold;
-                            text-align: left;
+                            text-align: center;
                             white-space: nowrap;
                             overflow: hidden;
                         }
-                        /* 3. Código de barras */
                         .label-barcode {
                             position: absolute;
-                            top: 14.4mm;
-                            left: 2mm;
-                            right: 2mm;
-                            height: 9mm;
-                            text-align: left;
+                            top: 11mm;
+                            left: 0;
+                            right: 0;
+                            height: 8mm;
+                            text-align: center;
                         }
-                        .label-barcode img {
-                            display: inline-block;
-                        }
-                        /* 4. Referencia del producto: debajo del código de barras */
                         .label-ref {
                             position: absolute;
-                            top: 23.7mm;
-                            left: 1mm;
-                            right: 1mm;
-                            height: 4.5mm;
-                            font-size: 11pt;
+                            top: 19.8mm;
+                            left: 1.5mm;
+                            right: 1.5mm;
+                            font-size: 9pt;
                             font-weight: bold;
                             letter-spacing: 0.3mm;
-                            text-align: left;
+                            text-align: center;
                             white-space: nowrap;
                             overflow: hidden;
                         }
@@ -136,16 +113,8 @@
                             t-attf-style="#{'' if label_first else 'page-break-before: always;'}"
                         >
                             <div class="label-name" t-esc="label['name']" />
-                            <div class="label-divider" />
                             <div class="label-price" t-out="label['price']" />
-                            <div class="label-barcode">
-                                <img
-                                    t-if="label['barcode_image']"
-                                    t-att-src="label['barcode_image']['src']"
-                                    t-att-width="label['barcode_image']['width']"
-                                    t-att-height="label['barcode_image']['height']"
-                                />
-                            </div>
+                            <div class="label-barcode" t-out="label['barcode_svg']" />
                             <div class="label-ref" t-esc="label['default_code']" />
                         </div>
                     </t>

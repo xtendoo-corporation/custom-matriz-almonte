@@ -3,16 +3,20 @@
 <odoo>
 
     <record id="paperformat_brother_ql700" model="report.paperformat">
-        <field name="name">Etiqueta Brother QL-700 (50 x 29 mm)</field>
+        <field name="name">Etiqueta Brother QL-700 (50 x 25 mm)</field>
         <field name="default" eval="False" />
         <field name="format">custom</field>
-        <field name="page_height">29</field>
+        <field name="page_height">25</field>
         <field name="page_width">50</field>
         <!-- OJO: wkhtmltopdf intercambia width/height cuando orientation=Landscape
              (lo usa para rotar tamaños estándar tipo A4). Como aquí ya definimos
-             manualmente el ancho (50) mayor que el alto (29), hay que dejar
-             'Portrait' para que NO se invietan y el resultado sea 50x29 real. -->
+             manualmente el ancho (50) mayor que el alto (25), hay que dejar
+             'Portrait' para que NO se invietan y el resultado sea 50x25 real. -->
         <field name="orientation">Portrait</field>
+        <!-- 25 mm de alto (no 29; el campo solo admite enteros): en cinta continua de 29 mm la QL-700
+             solo imprime ~26 mm de ancho útil (margen de 1,5 mm por lado).
+             Un PDF más alto obliga al driver a reducirlo, y el contenido
+             sale pequeño y el código de barras dentado. -->
         <field name="margin_top">0</field>
         <field name="margin_bottom">0</field>
         <field name="margin_left">0</field>

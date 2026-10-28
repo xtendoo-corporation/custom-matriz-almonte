@@ -2,17 +2,21 @@
 Matriz Almonte - Etiquetas de producto Brother QL-700
 =====================================================
 
-Este módulo permite imprimir etiquetas de producto con el tamaño exacto
-soportado por la impresora de etiquetas **Brother QL-700**: 5 cm de ancho
-(horizontal) por 2,9 cm de alto (vertical).
+Este módulo permite imprimir etiquetas de producto para la impresora de
+etiquetas **Brother QL-700** con cinta continua de **29 mm** (p. ej. DK-22210).
+La etiqueta se genera en **50 x 25 mm** (horizontal): es el área que la QL-700
+puede imprimir de verdad en esa cinta (el driver deja ~1,5 mm de margen por
+lado y ~3 mm en los extremos), de modo que el PDF no hace falta reescalarlo.
 
-En cada etiqueta se muestra:
+En cada etiqueta, todo centrado, se muestra:
 
-* Referencia interna del producto.
 * Nombre del producto.
 * Precio de venta con IVA incluido.
 * Código de barras (Code128) generado a partir de la referencia interna
-  del producto.
+  del producto. Se dibuja en vectorial (SVG), con barras de múltiplos
+  exactos de los 300 dpi de la impresora, para que salgan nítidas y el
+  lector las lea a la primera.
+* Referencia interna del producto.
 
 Uso
 ===
@@ -24,16 +28,30 @@ Uso
    (⚙) de la vista de lista.
 3. Indicar el número de etiquetas a imprimir por producto y pulsar
    **Imprimir**.
-4. Se generará un PDF con una página por etiqueta, con el tamaño exacto
-   de 5 x 2,9 cm, listo para enviar a la impresora Brother QL-700.
+4. Se generará un PDF con una página por etiqueta (50 x 25 mm), listo
+   para enviar a la impresora Brother QL-700.
 
 Configuración de la impresora
 ==============================
 
-Para obtener el resultado esperado, configure el controlador de
-impresión (CUPS / driver de Brother) con un tamaño de página personalizado
-de 50 mm x 29 mm, sin márgenes, y desactive el "ajustar a página" para
-que el PDF se imprima a tamaño real (100%).
+La QL-700 necesita un papel personalizado **29 mm de ancho x 56 mm de
+largo** (50 mm de etiqueta + los ~3 mm de margen de cada extremo, que
+el driver no imprime), tipo de soporte **cinta continua** (``Tape``) y
+escala **100 % / tamaño real** (nunca "ajustar a la página").
+
+Probado en Linux (CUPS, driver ``ptouch-ql``)::
+
+    lpoptions -p QL-700 -o PageSize=Custom.29x56mm -o MediaType=Tape -o CutLabel=1
+    lp -d QL-700 -o print-scaling=none etiqueta.pdf
+
+**Corte:** activar el corte automático y cortar **tras cada etiqueta**
+(``CutLabel=1``). Con el valor por defecto (0) la impresora solo corta al
+final del trabajo y varias etiquetas salen pegadas en una sola tira.
+
+En Windows, en *Preferencias de impresión* del driver Brother, crear un
+tamaño personalizado de 29 x 56 mm (cinta continua) y comprobar la prueba
+de diagnóstico de abajo. Con un tamaño de papel de 50 x 29 mm la etiqueta
+sale reducida y el código de barras sale dentado.
 
 Configuración con QZ Tray
 =========================
@@ -50,8 +68,8 @@ y la escala **NO** los controla QZ Tray, sino:
 2. Las opciones elegidas en el **diálogo de impresión del navegador**
    (tamaño de papel, escala, márgenes) en el momento de imprimir.
 
-Si ese tamaño de página no es EXACTAMENTE 50 x 29 mm, el PDF (que sí
-declara correctamente 50 x 29 mm) se "estampa" dentro de una página de
+Si ese tamaño de página no es el indicado arriba (29 x 56 mm), el PDF (que sí
+declara correctamente 50 x 25 mm) se "estampa" dentro de una página de
 otro tamaño (p. ej. Carta/A4 o una plantilla Brother distinta como el
 rollo continuo DK-22205 de 62 mm), y el resultado impreso se ve
 reducido y desplazado hacia una esquina/lado, aunque el PDF en sí sea
@@ -66,8 +84,8 @@ configuración de impresión.
    **Brother QL-700** → **Preferencias de impresión**.
 2. En la pestaña **Básico**, en "Tamaño de papel", elegir
    **Definido por el usuario / Custom** y crear un tamaño nuevo de
-   **50 mm x 29 mm** (ancho x alto). Guardarlo con un nombre
-   identificable (p. ej. "Etiqueta 50x29").
+   **29 mm x 56 mm** (ancho x alto). Guardarlo con un nombre
+   identificable (p. ej. "Etiqueta 29x56").
 3. Seleccionar ese tamaño personalizado y pulsar **Aceptar**. Es
    importante hacerlo desde *Dispositivos e impresoras* (propiedades del
    documento predeterminado del driver), no solo desde el diálogo de
@@ -78,13 +96,13 @@ configuración de impresión.
 5. Si se dispone de la **Brother Printer Setting Tool**, se puede crear
    /verificar el mismo tamaño personalizado desde ahí también.
 6. Al imprimir el PDF (Ctrl+P o el botón de imprimir de QZ Tray), en el
-   diálogo del navegador verificar: tamaño de papel = 50 x 29 mm (o el
+   diálogo del navegador verificar: tamaño de papel = 29 x 56 mm (o el
    nombre dado al tamaño personalizado), escala = **100% / Tamaño real**
    (nunca "Ajustar al tamaño del papel"), márgenes = **Ninguno**.
 
 **Prueba de diagnóstico:** imprima el mismo PDF generado por Odoo
 directamente con "Microsoft Print to PDF" o ábralo con un lector y
-compruebe que el contenido ocupa el 100% de la página de 50 x 29 mm (si
+compruebe que el contenido ocupa el 100% de la página de 50 x 25 mm (si
 es así, el PDF está bien y el ajuste pendiente es únicamente el del
 driver/cola de impresión descrito arriba).
 
@@ -95,7 +113,7 @@ el escalado::
 
     var config = qz.configs.create("Brother QL-700", {
         units: "mm",
-        size: {width: 50, height: 29},
+        size: {width: 29, height: 56},
         scaleContent: false,
         rasterize: false,
         density: 300,

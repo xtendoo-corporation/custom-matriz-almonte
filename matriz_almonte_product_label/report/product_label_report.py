@@ -1,7 +1,5 @@
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0)
-import base64
 import logging
-from io import BytesIO
 
 from markupsafe import Markup
 
@@ -9,12 +7,14 @@ from odoo import models
 
 _logger = logging.getLogger(__name__)
 
-# Resolución interna de renderizado de wkhtmltopdf (usada por Odoo cuando el
-# report.paperformat no fuerza un --zoom de compensación, ver dpi=96 en
-# report_paperformat.xml). 1mm equivale a estos "px CSS".
-_PX_PER_MM = 96.0 / 25.4
-# Altura física deseada del código de barras impreso en la etiqueta.
-_BARCODE_HEIGHT_MM = 9.0
+# La Brother QL-700 imprime a 300 dpi. Cada módulo (barra más estrecha) del
+# Code128 se dibuja con un número ENTERO de puntos de impresora: con una
+# imagen PNG reescalada las barras salían dentadas y el lector fallaba.
+_MM_PER_DOT = 25.4 / 300
+# Ancho máximo (mm) del código: la etiqueta mide 50 mm y la QL-700 deja
+# ~1,5 mm de margen no imprimible por lado.
+_BARCODE_MAX_WIDTH_MM = 46.0
+_BARCODE_HEIGHT_MM = 8.0
 
 
 class MatrizAlmonteProductLabelReport(models.AbstractModel):
@@ -58,64 +58,49 @@ class MatrizAlmonteProductLabelReport(models.AbstractModel):
         formatted = f"{amount:.2f}".replace(".", ",")
         return Markup("%s &#8364;") % formatted
 
-    def _get_barcode_image(self, value):
-        """Datos de la imagen del código de barras Code128 de ``value``.
+    def _get_barcode_svg(self, value):
+        """SVG vectorial (``Markup``) del código de barras Code128 de ``value``.
 
-        Devuelve un diccionario con ``src`` (data URI PNG en base64),
-        ``width`` y ``height`` (en "px CSS", a incluir como atributos HTML
-        del <img>). Se generan explícitamente estos dos últimos porque
-        wkhtmltopdf, con imágenes ``data:`` incrustadas, no siempre respeta
-        el tamaño indicado únicamente por CSS: el chunk de resolución física
-        (pHYs) que reportlab escribe en el PNG hace que la imagen se dibuje
-        a su tamaño intrínseco en píxeles interpretados como puntos,
-        produciendo una imagen enorme (p.ej. 600x150 "pt" en vez de mm).
-        Fijar ``width``/``height`` como atributos HTML (además de eliminar
-        esos metadatos con Pillow) es la solución robusta y ampliamente
-        documentada para este problema conocido de wkhtmltopdf.
+        Cada módulo ocupa 3 puntos de impresora (2 si el código es largo y
+        no cabe en la etiqueta), de modo que las barras salen nítidas. Si
+        ``value`` está vacío o no se puede codificar devuelve ``False``.
         """
         if not value:
             return False
         try:
-            raw = self.env["ir.actions.report"].barcode(
-                "Code128",
-                value,
-                width=600,
-                height=150,
-                humanreadable=0,
-                quiet=1,
-            )
+            from reportlab.graphics.barcode.code128 import Code128
+
+            barcode = Code128(value, barWidth=1, quiet=0)
+            barcode.validate()
+            barcode.encode()
+            barcode.decompose()
+            # reportlab: mayúsculas A-D = barra de 1-4 módulos, minúsculas
+            # a-d = espacio de 1-4 módulos.
+            rects = []
+            position = 0
+            for char in barcode.decomposed:
+                if char.isupper():
+                    width = ord(char) - 64
+                    rects.append(
+                        '<rect x="%d" y="0" width="%d" height="1"/>'
+                        % (position, width)
+                    )
+                else:
+                    width = ord(char) - 96
+                position += width
         except Exception:  # noqa: BLE001 - un código inválido no debe romper el PDF
             _logger.warning(
                 "No se ha podido generar el código de barras para %r", value
             )
             return False
 
-        try:
-            from PIL import Image
-
-            image = Image.open(BytesIO(raw))
-            src_width, src_height = image.size
-            # Volver a guardar sin metadatos de resolución física (pHYs),
-            # para que wkhtmltopdf no calcule el tamaño de la imagen a
-            # partir de un DPI embebido en lugar de usar el HTML/CSS.
-            image.info.pop("dpi", None)
-            buffer = BytesIO()
-            image.convert("RGB").save(buffer, format="PNG")
-            raw = buffer.getvalue()
-        except Exception:  # noqa: BLE001
-            _logger.warning(
-                "No se ha podido normalizar el PNG del código de barras de %r",
-                value,
-            )
-            src_width, src_height = 600, 150
-
-        height_px = max(1, round(_BARCODE_HEIGHT_MM * _PX_PER_MM))
-        width_px = max(1, round(height_px * src_width / src_height))
-        return {
-            "src": "data:image/png;base64,%s" % base64.b64encode(raw).decode(),
-            "width": width_px,
-            "height": height_px,
-        }
+        dots = 3 if position * 3 * _MM_PER_DOT <= _BARCODE_MAX_WIDTH_MM else 2
+        width_mm = min(position * dots * _MM_PER_DOT, _BARCODE_MAX_WIDTH_MM)
+        return Markup(
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d 1" '
+            'preserveAspectRatio="none" width="%.3fmm" height="%.1fmm" '
+            'shape-rendering="crispEdges">%s</svg>'
+        ) % (position, width_mm, _BARCODE_HEIGHT_MM, Markup("".join(rects)))
 
     def _get_label_data(self, product):
         """Diccionario con los datos a mostrar en una etiqueta de ``product``."""
@@ -125,7 +110,7 @@ class MatrizAlmonteProductLabelReport(models.AbstractModel):
             "default_code": product.default_code or "",
             "name": product.name,
             "price": self._format_price(price_with_tax),
-            "barcode_image": self._get_barcode_image(product.default_code),
+            "barcode_svg": self._get_barcode_svg(product.default_code),
         }
 
     def _get_report_values(self, docids, data=None):

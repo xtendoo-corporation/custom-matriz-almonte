@@ -66,15 +66,14 @@ class TestProductLabelBrotherQl700(TransactionCase):
         self.assertEqual(self.report_model._format_price(5), "5,00 &#8364;")
         self.assertEqual(self.report_model._format_price(1234.5), "1234,50 &#8364;")
 
-    def test_barcode_image(self):
-        image = self.report_model._get_barcode_image(self.product.default_code)
-        self.assertTrue(image)
-        self.assertTrue(image["src"].startswith("data:image/png;base64,"))
-        self.assertGreater(image["width"], 0)
-        self.assertGreater(image["height"], 0)
+    def test_barcode_svg(self):
+        svg = self.report_model._get_barcode_svg(self.product.default_code)
+        self.assertIsInstance(svg, Markup)
+        self.assertTrue(svg.startswith("<svg"))
+        self.assertIn("<rect", svg)
 
-    def test_barcode_image_without_reference(self):
-        self.assertFalse(self.report_model._get_barcode_image(False))
+    def test_barcode_svg_without_reference(self):
+        self.assertFalse(self.report_model._get_barcode_svg(False))
 
     def test_wizard_default_get_from_product_product(self):
         wizard_model = self.env["matriz_almonte_product_label_wizard"].with_context(

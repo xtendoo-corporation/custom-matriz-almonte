@@ -19,7 +19,7 @@
             <head />
             <body>
                 <!-- Formato "Plata": mismo tamaño y comportamiento que la
-                     etiqueta estándar (50 x 29 mm, Brother QL-700), pero
+                     etiqueta estándar (50 x 25 mm, Brother QL-700), pero
                      SOLO muestra la referencia y el precio (sin nombre ni
                      código de barras). Ver los comentarios de la plantilla
                      estándar (product_label_report.xml) para el detalle de
@@ -29,7 +29,7 @@
                     <meta charset="utf-8" />
                     <style type="text/css">
                         @page {
-                            size: 50mm 29mm;
+                            size: 50mm 25mm;
                             margin: 0;
                         }
                         * {
@@ -42,23 +42,23 @@
                         .label {
                             position: relative;
                             width: 50mm;
-                            height: 29mm;
+                            height: 25mm;
                             overflow: hidden;
                             font-family: Arial, Helvetica, sans-serif;
                             color: #000000;
                         }
                         /* Referencia y precio: textos pequeños y juntos,
-                           alineados a la izquierda y centrados verticalmente
+                           centrados horizontal y verticalmente
                            en el medio de la etiqueta. Se usa un bloque
                            centrado verticalmente (top 50% + translate) que
                            agrupa ambas líneas una encima de la otra. */
                         .label-center {
                             position: absolute;
                             top: 50%;
-                            left: 1mm;
-                            right: 1mm;
+                            left: 1.5mm;
+                            right: 1.5mm;
                             transform: translateY(-50%);
-                            text-align: left;
+                            text-align: center;
                         }
                         .label-ref {
                             font-size: 7pt;
