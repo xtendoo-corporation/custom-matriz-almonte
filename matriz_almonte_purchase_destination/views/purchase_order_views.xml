@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="purchase_order_form_destination" model="ir.ui.view">
+        <field name="name">purchase.order.form.destination</field>
+        <field name="model">purchase.order</field>
+        <field name="inherit_id" ref="purchase.purchase_order_form"/>
+        <field name="arch" type="xml">
+            <div name="button_box" position="inside">
+                <button name="action_view_destination_pickings" type="object"
+                        class="oe_stat_button" icon="fa-truck"
+                        invisible="not destination_picking_count"
+                        groups="stock.group_stock_user">
+                    <field name="destination_picking_count" widget="statinfo" string="Traspasos destino"/>
+                </button>
+            </div>
+            <field name="partner_ref" position="after">
+                <field name="dest_warehouse_id" options="{'no_create': True}"
+                       readonly="state in ('purchase', 'cancel') or destination_picking_count"/>
+            </field>
+        </field>
+    </record>
+
+    <record id="purchase_order_kpis_tree_destination" model="ir.ui.view">
+        <field name="name">purchase.order.kpis.list.destination</field>
+        <field name="model">purchase.order</field>
+        <field name="inherit_id" ref="purchase.purchase_order_kpis_tree"/>
+        <field name="arch" type="xml">
+            <field name="partner_id" position="after">
+                <field name="dest_warehouse_id" optional="show"/>
+            </field>
+        </field>
+    </record>
+
+    <record id="purchase_order_view_tree_destination" model="ir.ui.view">
+        <field name="name">purchase.order.list.destination</field>
+        <field name="model">purchase.order</field>
+        <field name="inherit_id" ref="purchase.purchase_order_view_tree"/>
+        <field name="arch" type="xml">
+            <field name="partner_id" position="after">
+                <field name="dest_warehouse_id" optional="show"/>
+            </field>
+        </field>
+    </record>
+
+    <record id="view_purchase_order_filter_destination" model="ir.ui.view">
+        <field name="name">request.quotation.select.destination</field>
+        <field name="model">purchase.order</field>
+        <field name="inherit_id" ref="purchase.view_purchase_order_filter"/>
+        <field name="arch" type="xml">
+            <field name="partner_id" position="after">
+                <field name="dest_warehouse_id"/>
+            </field>
+            <xpath expr="//search" position="inside">
+                <filter name="group_dest_warehouse" string="Almacén destino"
+                        context="{'group_by': 'dest_warehouse_id'}"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="purchase_order_view_search_destination" model="ir.ui.view">
+        <field name="name">purchase.order.select.destination</field>
+        <field name="model">purchase.order</field>
+        <field name="inherit_id" ref="purchase.purchase_order_view_search"/>
+        <field name="arch" type="xml">
+            <field name="partner_id" position="after">
+                <field name="dest_warehouse_id"/>
+            </field>
+            <xpath expr="//search" position="inside">
+                <filter name="group_dest_warehouse" string="Almacén destino"
+                        context="{'group_by': 'dest_warehouse_id'}"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

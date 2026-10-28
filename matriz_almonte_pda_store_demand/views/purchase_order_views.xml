@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0) -->
+<odoo>
+    <record id="purchase_order_form_pda" model="ir.ui.view">
+        <field name="name">purchase.order.form.pda</field>
+        <field name="model">purchase.order</field>
+        <field name="inherit_id"
+               ref="matriz_almonte_purchase_destination.purchase_order_form_destination"/>
+        <field name="arch" type="xml">
+            <field name="dest_warehouse_id" position="after">
+                <field name="pda_uuid" invisible="not pda_uuid"/>
+            </field>
+        </field>
+    </record>
+</odoo>
