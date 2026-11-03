@@ -40,31 +40,64 @@ class TestProductDefaultCode(TransactionCase):
 
     def test_first_product_of_category_starts_at_one(self):
         template = self._create_template(self.categ_candles)
-        self.assertEqual(template.default_code, "01000001")
-        self.assertEqual(template.product_variant_id.default_code, "01000001")
+        self.assertEqual(template.default_code, "010001")
+        self.assertEqual(template.product_variant_id.default_code, "010001")
 
     def test_next_code_continues_from_highest_existing(self):
-        self._create_template(self.categ_candles, default_code="01000002")
-        self._create_template(self.categ_candles, default_code="0100000X")
-        self._create_template(self.categ_candles, default_code="9901000999")
+        self._create_template(self.categ_candles, default_code="010002")
+        self._create_template(self.categ_candles, default_code="01000X")
+        self._create_template(self.categ_candles, default_code="99010999")
         template = self._create_template(self.categ_candles)
-        self.assertEqual(template.default_code, "01000003")
+        self.assertEqual(template.default_code, "010003")
+
+    def test_three_digit_category_continues_from_existing_code(self):
+        category = self.env["product.category"].create({
+            "name": "Categoría 123", "product_reference_code": "123",
+        })
+        self._create_template(category, default_code="1230045")
+        self.assertEqual(self._create_template(category).default_code, "1230046")
+        self.assertEqual(self._create_template(category).default_code, "1230047")
+
+    def test_existing_code_with_spaces_is_considered(self):
+        template = self._create_template(self.categ_candles, default_code="LEGACY")
+        self.env.cr.execute(
+            "UPDATE product_product SET default_code = ' 010045 ' WHERE id = %s",
+            (template.product_variant_id.id,),
+        )
+        self.env.invalidate_all()
+        new_template = self._create_template(self.categ_candles)
+        self.assertEqual(new_template.default_code, "010046")
+
+    def test_code_stored_only_on_template_is_considered(self):
+        template = self._create_template(self.categ_candles, default_code="LEGACY")
+        self.env.flush_all()
+        self.env.cr.execute(
+            "UPDATE product_product SET default_code = NULL WHERE id = %s",
+            (template.product_variant_id.id,),
+        )
+        self.env.cr.execute(
+            "UPDATE product_template SET default_code = '010070' WHERE id = %s",
+            (template.id,),
+        )
+        self.env.invalidate_all()
+        new_template = self._create_template(self.categ_candles)
+        self.assertEqual(new_template.default_code, "010071")
 
     def test_categories_with_same_code_share_numbering(self):
         first = self._create_template(self.categ_candles)
         second = self._create_template(self.categ_candles_bis)
-        self.assertEqual(first.default_code, "01000001")
-        self.assertEqual(second.default_code, "01000002")
+        self.assertEqual(first.default_code, "010001")
+        self.assertEqual(second.default_code, "010002")
 
     def test_two_and_three_digit_codes_do_not_mix(self):
-        self._create_template(self.categ_candles, default_code="01000050")
+        self._create_template(self.categ_candles, default_code="010050")
         template = self._create_template(self.categ_three_digits)
-        self.assertEqual(template.default_code, "010000001")
-        self.assertEqual(self._create_template(self.categ_candles).default_code, "01000051")
+        self.assertEqual(template.default_code, "0100001")
+        self.assertEqual(self._create_template(self.categ_candles).default_code, "010051")
 
     def test_archived_products_count_for_numbering(self):
-        self._create_template(self.categ_candles, default_code="01000007", active=False)
-        self.assertEqual(self._create_template(self.categ_candles).default_code, "01000008")
+        self._create_template(self.categ_candles, default_code="010007", active=False)
+        self.assertEqual(self._create_template(self.categ_candles).default_code, "010008")
 
     def test_batch_creation_gets_consecutive_codes(self):
         templates = self.env["product.template"].create([
@@ -73,13 +106,13 @@ class TestProductDefaultCode(TransactionCase):
             {"name": "Rosario", "categ_id": self.categ_three_digits.id},
         ])
         self.assertEqual(
-            templates.mapped("default_code"), ["01000001", "01000002", "010000001"]
+            templates.mapped("default_code"), ["010001", "010002", "0100001"]
         )
 
     def test_manual_reference_is_respected(self):
         template = self._create_template(self.categ_candles, default_code="MANUAL-1")
         self.assertEqual(template.default_code, "MANUAL-1")
-        self.assertEqual(self._create_template(self.categ_candles).default_code, "01000001")
+        self.assertEqual(self._create_template(self.categ_candles).default_code, "010001")
 
     def test_manual_reference_allowed_in_category_without_code(self):
         template = self._create_template(self.categ_without_code, default_code="LIBRE")
@@ -97,13 +130,13 @@ class TestProductDefaultCode(TransactionCase):
         product = self.env["product.product"].create({
             "name": "Vela directa", "categ_id": self.categ_candles.id,
         })
-        self.assertEqual(product.default_code, "01000001")
+        self.assertEqual(product.default_code, "010001")
 
     def test_form_creation_generates_code(self):
         with Form(self.env["product.template"]) as template_form:
             template_form.name = "Vela de formulario"
             template_form.categ_id = self.categ_candles
-        self.assertEqual(template_form.record.default_code, "01000001")
+        self.assertEqual(template_form.record.default_code, "010001")
 
     def test_each_variant_gets_its_own_code(self):
         attribute = self.env["product.attribute"].create({
@@ -119,29 +152,29 @@ class TestProductDefaultCode(TransactionCase):
         )
         self.assertEqual(
             sorted(template.product_variant_ids.mapped("default_code")),
-            ["01000001", "01000002"],
+            ["010001", "010002"],
         )
 
     def test_changing_category_keeps_reference(self):
         template = self._create_template(self.categ_candles)
         template.categ_id = self.categ_three_digits
-        self.assertEqual(template.default_code, "01000001")
+        self.assertEqual(template.default_code, "010001")
 
     def test_copy_generates_new_reference(self):
         template = self._create_template(self.categ_candles)
-        self.assertEqual(template.copy().default_code, "01000002")
-        self.assertEqual(template.product_variant_id.copy().default_code, "01000003")
+        self.assertEqual(template.copy().default_code, "010002")
+        self.assertEqual(template.product_variant_id.copy().default_code, "010003")
 
     def test_duplicate_reference_is_rejected(self):
         template = self._create_template(self.categ_candles)
-        with self.assertRaisesRegex(ValidationError, "01000001"):
-            self._create_template(self.categ_without_code, default_code="01000001")
+        with self.assertRaisesRegex(ValidationError, "010001"):
+            self._create_template(self.categ_without_code, default_code="010001")
         other = self._create_template(self.categ_candles)
         with self.assertRaises(ValidationError):
             other.default_code = template.default_code
         template.active = False
         with self.assertRaises(ValidationError):
-            self._create_template(self.categ_without_code, default_code="01000001")
+            self._create_template(self.categ_without_code, default_code="010001")
 
     def test_duplicate_reference_in_same_batch_is_rejected(self):
         with self.assertRaises(ValidationError):
@@ -172,6 +205,6 @@ class TestProductDefaultCode(TransactionCase):
         self.assertFalse(template.default_code)
 
     def test_numbering_exhausted(self):
-        self._create_template(self.categ_candles, default_code="01999999")
+        self._create_template(self.categ_candles, default_code="019999")
         with self.assertRaisesRegex(UserError, "agotado"):
             self._create_template(self.categ_candles)

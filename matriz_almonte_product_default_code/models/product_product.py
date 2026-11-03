@@ -1,7 +1,7 @@
 from odoo import _, api, models
 from odoo.exceptions import UserError, ValidationError
 
-SEQUENCE_DIGITS = 6
+SEQUENCE_DIGITS = 4
 # Espacio de nombres propio para los bloqueos consultivos de PostgreSQL.
 ADVISORY_LOCK_NAMESPACE = 742519
 SKIP_GENERATION_CONTEXT_KEY = "skip_category_default_code"
@@ -43,13 +43,20 @@ class ProductProduct(models.Model):
     def _get_next_default_code(self, prefix):
         self._lock_default_code_prefix(prefix)
         self.flush_model(["default_code"])
+        self.env["product.template"].flush_model(["default_code"])
+        # La plantilla también guarda la referencia (p. ej. datos importados con
+        # variantes) y puede llevar espacios, así que se revisan ambas tablas.
         self.env.cr.execute(
             """
-            SELECT MAX(default_code)
-              FROM product_product
-             WHERE default_code LIKE %s
-               AND length(default_code) = %s
-               AND default_code ~ '^[0-9]+$'
+            SELECT MAX(code)
+              FROM (
+                    SELECT btrim(default_code) AS code FROM product_product
+                     UNION ALL
+                    SELECT btrim(default_code) AS code FROM product_template
+                   ) AS codes
+             WHERE code LIKE %s
+               AND length(code) = %s
+               AND code ~ '^[0-9]+$'
             """,
             (f"{prefix}%", len(prefix) + SEQUENCE_DIGITS),
         )

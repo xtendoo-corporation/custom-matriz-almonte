@@ -3,7 +3,7 @@
     "name": "Matriz Almonte - Referencia de producto por categoría",
     "summary": (
         "Genera la referencia interna de los productos nuevos a partir del "
-        "código numérico de su categoría más un correlativo de 6 dígitos, "
+        "código numérico de su categoría más un correlativo de 4 dígitos, "
         "e impide referencias duplicadas."
     ),
     "version": "19.0.1.0.0",

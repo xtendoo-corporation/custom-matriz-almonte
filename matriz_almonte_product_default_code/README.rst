@@ -11,9 +11,10 @@ Funcionamiento
   numéricos (por ejemplo ``01``). Varias categorías pueden compartir código y,
   en ese caso, comparten numeración.
 * Al crear un producto con la referencia vacía se asigna
-  ``<referencia categoría><6 dígitos>``. El número es el más alto existente con
+  ``<referencia categoría><4 dígitos>``. El número es el más alto existente con
   ese mismo código y longitud, más uno, contando también los productos
-  archivados. Ejemplo: tras ``01000002`` viene ``01000003``.
+  archivados y las referencias guardadas en la plantilla (ignorando espacios).
+  Ejemplo: tras ``1230045`` viene ``1230046``.
 * Si el usuario escribe la referencia a mano, se respeta.
 * Si la referencia viene vacía y la categoría no tiene código, la creación se
   bloquea con un aviso.
