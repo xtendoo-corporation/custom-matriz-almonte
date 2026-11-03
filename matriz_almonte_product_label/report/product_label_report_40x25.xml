@@ -10,7 +10,7 @@
         <field name="report_file">matriz_almonte_product_label.product_label_report_40x25</field>
         <field
             name="print_report_name"
-            >'Etiquetas 40x25 - %s' % (object.display_name or '')</field>
+            >'Etiquetas Godex - %s' % (object.display_name or '')</field>
         <field name="paperformat_id" ref="paperformat_brother_ql700_40x25" />
     </record>
 
