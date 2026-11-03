@@ -33,5 +33,24 @@
         <field name="dpi">96</field>
     </record>
 
+    <!-- Misma configuración que el formato de 50 x 25 mm (ver comentarios de
+         arriba), pero con una etiqueta más estrecha de 40 x 25 mm. -->
+    <record id="paperformat_brother_ql700_40x25" model="report.paperformat">
+        <field name="name">Etiqueta Brother QL-700 (40 x 25 mm)</field>
+        <field name="default" eval="False" />
+        <field name="format">custom</field>
+        <field name="page_height">25</field>
+        <field name="page_width">40</field>
+        <field name="orientation">Portrait</field>
+        <field name="margin_top">0</field>
+        <field name="margin_bottom">0</field>
+        <field name="margin_left">0</field>
+        <field name="margin_right">0</field>
+        <field name="header_line" eval="False" />
+        <field name="header_spacing">0</field>
+        <field name="disable_shrinking" eval="True" />
+        <field name="dpi">96</field>
+    </record>
+
 </odoo>
 

@@ -31,6 +31,13 @@ Uso
 4. Se generará un PDF con una página por etiqueta (50 x 25 mm), listo
    para enviar a la impresora Brother QL-700.
 
+Formatos disponibles en el asistente:
+
+* **Estándar** (50 x 25 mm): nombre, precio, código de barras y referencia.
+* **Estándar 40 x 25 mm**: el mismo contenido en una etiqueta de 4 cm de
+  ancho. El código de barras se limita a 37 mm de ancho.
+* **Plata** (50 x 25 mm): solo referencia y precio.
+
 Configuración de la impresora
 ==============================
 
@@ -60,8 +67,9 @@ El módulo depende de ``base_report_to_printer_qztray``. Ese módulo manda el
 PDF a QZ Tray **sin indicar tamaño de papel**, así que QZ imprime en el papel
 por defecto de la cola/driver y reescala la etiqueta (sale pequeña y
 descentrada). Para evitarlo, ``static/src/js/qz_label_print.esm.js`` envuelve
-el dispatcher de QZ y, **solo para los dos informes de etiquetas**, pasa a
-QZ papel de 56 x 29 mm, sin escalado, márgenes ``top 3 / left 2`` mm y 300 dpi.
+el dispatcher de QZ y, **solo para los informes de etiquetas**, pasa a
+QZ el papel de la etiqueta (56 x 29 mm para las de 50 mm y 46 x 29 mm para
+la de 40 mm), sin escalado, márgenes ``top 3 / left 2`` mm y 300 dpi.
 Así no hay que configurar el papel por defecto en cada equipo.
 
 Requisitos en el equipo que imprime:
@@ -77,7 +85,7 @@ Requisitos en el equipo que imprime:
 
 Los márgenes se calibraron en Linux/CUPS con ``ptouch-ql``. Si en el driver de
 Windows el contenido sale desplazado, hay que ajustar ``margins`` en
-``LABEL_QZ_OPTIONS``.
+``LABEL_QZ_BASE_OPTIONS``.
 
 Si en cambio existe una integración por script que llama a
 ``qz.print()`` directamente (sin pasar por el diálogo del navegador),

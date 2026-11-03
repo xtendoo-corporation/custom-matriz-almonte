@@ -2,6 +2,12 @@
 from odoo import _, api, fields, models
 from odoo.exceptions import UserError, ValidationError
 
+LABEL_FORMAT_REPORTS = {
+    "standard": "action_report_product_label_brother_ql700",
+    "standard_40x25": "action_report_product_label_40x25",
+    "plata": "action_report_product_label_plata",
+}
+
 
 class MatrizAlmonteProductLabelWizard(models.TransientModel):
     _name = "matriz_almonte_product_label_wizard"
@@ -20,6 +26,10 @@ class MatrizAlmonteProductLabelWizard(models.TransientModel):
     label_format = fields.Selection(
         selection=[
             ("standard", "Estándar (nombre, precio y código de barras)"),
+            (
+                "standard_40x25",
+                "Estándar 40 x 25 mm (nombre, precio y código de barras)",
+            ),
             ("plata", "Plata (solo referencia y precio)"),
         ],
         string="Formato de etiqueta",
@@ -59,16 +69,10 @@ class MatrizAlmonteProductLabelWizard(models.TransientModel):
             "custom_quantity": self.custom_quantity,
             "product_ids": self.product_ids.ids,
         }
-        if self.label_format == "plata":
-            report_xmlid = (
-                "matriz_almonte_product_label.action_report_product_label_plata"
-            )
-        else:
-            report_xmlid = (
-                "matriz_almonte_product_label."
-                "action_report_product_label_brother_ql700"
-            )
-        report = self.env.ref(report_xmlid)
+        report = self.env.ref(
+            "matriz_almonte_product_label."
+            + LABEL_FORMAT_REPORTS[self.label_format]
+        )
         return report.report_action(self.product_ids.ids, data=data)
 
 

@@ -11,15 +11,16 @@ _logger = logging.getLogger(__name__)
 # Code128 se dibuja con un número ENTERO de puntos de impresora: con una
 # imagen PNG reescalada las barras salían dentadas y el lector fallaba.
 _MM_PER_DOT = 25.4 / 300
-# Ancho máximo (mm) del código: la etiqueta mide 50 mm y la QL-700 deja
-# ~1,5 mm de margen no imprimible por lado.
-_BARCODE_MAX_WIDTH_MM = 46.0
 _BARCODE_HEIGHT_MM = 8.0
 
 
 class MatrizAlmonteProductLabelReport(models.AbstractModel):
     _name = "report.matriz_almonte_product_label.product_label_report"
     _description = "Parser del informe de etiquetas de producto Brother QL-700"
+
+    # Ancho máximo (mm) del código: la etiqueta mide 50 mm y la QL-700 deja
+    # ~1,5 mm de margen no imprimible por lado.
+    _barcode_max_width_mm = 46.0
 
     def _get_price_with_tax(self, product):
         """Precio de venta del producto (list_price) con impuestos incluidos."""
@@ -94,8 +95,9 @@ class MatrizAlmonteProductLabelReport(models.AbstractModel):
             )
             return False
 
-        dots = 3 if position * 3 * _MM_PER_DOT <= _BARCODE_MAX_WIDTH_MM else 2
-        width_mm = min(position * dots * _MM_PER_DOT, _BARCODE_MAX_WIDTH_MM)
+        max_width_mm = self._barcode_max_width_mm
+        dots = 3 if position * 3 * _MM_PER_DOT <= max_width_mm else 2
+        width_mm = min(position * dots * _MM_PER_DOT, max_width_mm)
         return Markup(
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d 1" '
             'preserveAspectRatio="none" width="%.3fmm" height="%.1fmm" '
@@ -146,3 +148,15 @@ class MatrizAlmonteProductLabelReportPlata(
     _description = "Parser del informe de etiquetas de producto Plata"
 
 
+class MatrizAlmonteProductLabelReport40x25(models.AbstractModel):
+    """Parser de la etiqueta estándar en formato 40 x 25 mm.
+
+    Mismos datos que la etiqueta estándar; solo se reduce el ancho máximo
+    del código de barras para que quepa en los 40 mm de la etiqueta.
+    """
+
+    _name = "report.matriz_almonte_product_label.product_label_report_40x25"
+    _inherit = "report.matriz_almonte_product_label.product_label_report"
+    _description = "Parser del informe de etiquetas de producto 40 x 25 mm"
+
+    _barcode_max_width_mm = 37.0

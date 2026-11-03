@@ -4,7 +4,7 @@
     "summary": (
         "Impresión de etiquetas de producto (referencia, nombre, precio con "
         "IVA incluido y código de barras) con el tamaño exacto para la "
-        "impresora de etiquetas Brother QL-700 (5 x 2,5 cm)."
+        "impresora de etiquetas Brother QL-700 (5 x 2,5 cm y 4 x 2,5 cm)."
     ),
     "version": "19.0.1.0.0",
     "category": "Inventory/Inventory",
@@ -17,6 +17,7 @@
         "report/report_paperformat.xml",
         "report/product_label_report.xml",
         "report/product_label_report_plata.xml",
+        "report/product_label_report_40x25.xml",
         "wizard/product_label_wizard_views.xml",
         "views/product_template_views.xml",
         "views/product_product_views.xml",

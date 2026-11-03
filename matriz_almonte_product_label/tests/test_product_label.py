@@ -1,6 +1,8 @@
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0)
 """Tests del módulo matriz_almonte_product_label."""
 
+import re
+
 from markupsafe import Markup
 
 from odoo.exceptions import UserError, ValidationError
@@ -12,6 +14,12 @@ class TestProductLabelBrotherQl700(TransactionCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
+        # Sin diseño de documento, report_action abre el asistente de
+        # configuración en lugar de devolver la acción del informe.
+        if not cls.env.company.external_report_layout_id:
+            cls.env.company.external_report_layout_id = cls.env.ref(
+                "web.external_layout_standard"
+            )
         cls.tax_21 = cls.env["account.tax"].create(
             {
                 "name": "Test IVA 21% (matriz_almonte_product_label)",
@@ -203,3 +211,85 @@ class TestProductLabelBrotherQl700(TransactionCase):
 
 
 
+
+    def test_wizard_report_for_each_format(self):
+        expected_reports = {
+            "standard": "matriz_almonte_product_label.product_label_report",
+            "standard_40x25": (
+                "matriz_almonte_product_label.product_label_report_40x25"
+            ),
+            "plata": "matriz_almonte_product_label.product_label_report_plata",
+        }
+        for label_format, report_name in expected_reports.items():
+            with self.subTest(label_format=label_format):
+                wizard = self.env["matriz_almonte_product_label_wizard"].create(
+                    {
+                        "product_ids": [(6, 0, self.product.ids)],
+                        "label_format": label_format,
+                    }
+                )
+                action = wizard.action_print_report()
+                self.assertEqual(action["report_name"], report_name)
+                self.assertEqual(
+                    action["data"]["product_ids"], self.product.ids
+                )
+
+    def test_40x25_paperformat(self):
+        report = self.env.ref(
+            "matriz_almonte_product_label.action_report_product_label_40x25"
+        )
+        paperformat = report.paperformat_id
+        self.assertEqual(
+            (paperformat.page_width, paperformat.page_height), (40, 25)
+        )
+        self.assertEqual(paperformat.orientation, "Portrait")
+
+    def test_40x25_has_same_content_as_standard(self):
+        report_40x25 = self.env[
+            "report.matriz_almonte_product_label.product_label_report_40x25"
+        ]
+        data = {"custom_quantity": 2, "product_ids": self.product.ids}
+        values = report_40x25._get_report_values(self.product.ids, data)
+        html = str(
+            self.env["ir.qweb"]._render(
+                "matriz_almonte_product_label.product_label_report_40x25",
+                values,
+            )
+        )
+        self.assertEqual(len(values["labels"]), 2)
+        self.assertEqual(html.count(self.product.default_code), 2)
+        self.assertEqual(html.count(self.product.name), 2)
+        self.assertEqual(html.count("12,10 &#8364;"), 2)
+        self.assertEqual(html.count("<svg"), 2)
+        self.assertIn("size: 40mm 25mm", html)
+        self.assertLess(html.index("<main"), html.index("<style"))
+
+    def test_40x25_barcode_fits_label_width(self):
+        report_40x25 = self.env[
+            "report.matriz_almonte_product_label.product_label_report_40x25"
+        ]
+        for code in ("1230045", "LONGREFERENCE-0123456789", "X" * 40):
+            with self.subTest(code=code):
+                width_40 = self._svg_width_mm(report_40x25._get_barcode_svg(code))
+                width_50 = self._svg_width_mm(self.report_model._get_barcode_svg(code))
+                self.assertLessEqual(width_40, 37.0)
+                self.assertLessEqual(width_50, 46.0)
+        self.assertEqual(
+            self._svg_width_mm(report_40x25._get_barcode_svg("X" * 40)), 37.0
+        )
+
+    @staticmethod
+    def _svg_width_mm(svg):
+        return float(re.search(r'width="([0-9.]+)mm"', svg).group(1))
+
+    def test_render_qweb_pdf_40x25(self):
+        report = self.env.ref(
+            "matriz_almonte_product_label.action_report_product_label_40x25"
+        )
+        content, report_type = report._render_qweb_pdf(
+            report.report_name,
+            self.product.ids,
+            data={"custom_quantity": 1, "product_ids": self.product.ids},
+        )
+        self.assertIn(report_type, ("pdf", "html"))
+        self.assertTrue(content)
