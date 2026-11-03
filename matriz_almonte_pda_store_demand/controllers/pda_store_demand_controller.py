@@ -205,6 +205,7 @@ class MatrizAlmontePdaStoreDemandController(http.Controller):
             if not sellers:
                 warnings.append({
                     "id_articulo": product.id,
+                    "referencia": product.default_code or "",
                     "nombre": product.display_name,
                     "mensaje": _NO_SELLER_WARNING,
                 })
@@ -215,6 +216,7 @@ class MatrizAlmontePdaStoreDemandController(http.Controller):
         return [
             {
                 "id_articulo": line.product_id.id,
+                "referencia": line.product_id.default_code or "",
                 "nombre": line.product_id.display_name,
                 "mensaje": _NO_SHOP_STOCK_WARNING,
             }
@@ -312,6 +314,22 @@ class MatrizAlmontePdaStoreDemandController(http.Controller):
             raise error
         return value
 
+    @staticmethod
+    def _resolve_product(article):
+        """Producto de la línea por su Referencia (``default_code``).
+
+        El código es alfanumérico: se busca como texto y nunca se convierte a
+        número, para no perder ceros (``"109040"`` o ``"010001"``). Un número
+        JSON se trata como la misma referencia en texto.
+        """
+        if isinstance(article, int) and not isinstance(article, bool):
+            article = str(article)
+        if not isinstance(article, str) or not article.strip():
+            raise ValidationError("Línea con artículo o unidades no válidos.")
+        return request.env["product.product"].search(
+            [("default_code", "=", article.strip())], limit=1
+        )
+
     @classmethod
     def _prepare_lines(cls, lines):
         """Agrupa por producto y valida; devuelve ``[(product, qty, stock), ...]``.
@@ -324,25 +342,32 @@ class MatrizAlmontePdaStoreDemandController(http.Controller):
             raise ValidationError("El pedido no tiene líneas.")
         if len(lines) > _MAX_LINES:
             raise ValidationError("Demasiadas líneas (máximo %s)." % _MAX_LINES)
+        products = request.env["product.product"]
         quantities = {}
         shop_stocks = {}
+        missing = []
         for line in lines:
+            if not isinstance(line, dict):
+                raise ValidationError("Línea con artículo o unidades no válidos.")
+            article = line.get("id_articulo")
             try:
-                product_id = int(line.get("id_articulo"))
                 qty = float(line.get("unidades"))
-            except (AttributeError, TypeError, ValueError):
+            except (TypeError, ValueError):
                 raise ValidationError("Línea con artículo o unidades no válidos.")
             if not math.isfinite(qty) or qty <= 0:
                 raise ValidationError("Las unidades deben ser mayores que cero.")
-            quantities[product_id] = quantities.get(product_id, 0.0) + qty
-            shop_stock = cls._parse_shop_stock(line, product_id)
+            product = cls._resolve_product(article)
+            if not product:
+                missing.append(str(article))
+                continue
+            products |= product
+            quantities[product.id] = quantities.get(product.id, 0.0) + qty
+            shop_stock = cls._parse_shop_stock(line, article)
             if shop_stock is not None:
-                shop_stocks[product_id] = shop_stock
-        products = request.env["product.product"].browse(list(quantities)).exists()
-        missing = set(quantities) - set(products.ids)
+                shop_stocks[product.id] = shop_stock
         if missing:
             raise ValidationError(
-                "Artículos inexistentes en Odoo: %s." % sorted(missing)
+                "Artículos inexistentes en Odoo: %s." % ", ".join(missing)
             )
         not_purchasable = products.filtered(lambda product: not product.purchase_ok)
         if not_purchasable:

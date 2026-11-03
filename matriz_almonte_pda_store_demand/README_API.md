@@ -16,8 +16,13 @@ Proveedores de la compañía (`supplier_rank > 0` o con tarifas de proveedor).
 
 ```json
 {"uuid": "6f1c...", "id_proveedor": 57, "nota": "opcional",
- "lineas": [{"id_articulo": 1234, "unidades": 10, "stock_tienda": 3}]}
+ "lineas": [{"id_articulo": "109040", "unidades": 10, "stock_tienda": 3}]}
 ```
+
+- `id_articulo`: **Referencia** del producto (`default_code`). Es un código
+  alfanumérico y se busca tal cual (sin espacios exteriores): enviarlo como
+  texto para conservar los ceros (`"010001"` y `"10001"` son artículos
+  distintos). Un número JSON se acepta y se trata como la misma referencia.
 
 - `unidades`: decimal > 0.
 - `stock_tienda` (opcional): stock actual de la tienda, decimal ≥ 0. `0` es un
@@ -34,7 +39,7 @@ almacén destino. Las líneas del mismo artículo se suman. Reenviar el mismo
 {"success": true, "code": "PURCHASE_CREATED", "duplicate": false,
  "message": "Pedido enviado a central: P00123", "order_id": 123,
  "order_name": "P00123", "state": "draft",
- "avisos": [{"id_articulo": 5678, "nombre": "Medalla", "mensaje": "..."}]}
+ "avisos": [{"id_articulo": 5678, "referencia": "010001", "nombre": "Medalla", "mensaje": "..."}]}
 ```
 
 `avisos` lista los artículos sin ese proveedor asignado (precio 0) y los

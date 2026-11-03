@@ -41,13 +41,16 @@ class TestPdaStoreDemand(TransactionCase):
             }
         )
         cls.product = cls.env["product.product"].create(
-            {"name": "Vela PDA", "type": "consu", "purchase_ok": True}
+            {"name": "Vela PDA", "default_code": "109040", "type": "consu",
+             "purchase_ok": True}
         )
         cls.unlinked = cls.env["product.product"].create(
-            {"name": "Medalla sin proveedor", "type": "consu", "purchase_ok": True}
+            {"name": "Medalla sin proveedor", "default_code": "0100", "type": "consu",
+             "purchase_ok": True}
         )
         cls.no_purchase = cls.env["product.product"].create(
-            {"name": "No comprable", "type": "consu", "purchase_ok": False}
+            {"name": "No comprable", "default_code": "NP-01", "type": "consu",
+             "purchase_ok": False}
         )
         cls.supplier = cls.env["res.partner"].create(
             {"name": "Cerería PDA", "supplier_rank": 1, "ref": "P01", "vat": "ESB00000000"}
@@ -85,8 +88,12 @@ class TestPdaStoreDemand(TransactionCase):
             "id_proveedor": self.supplier.id,
             "nota": "urgente <b>",
             "lineas": [
-                {"id_articulo": self.product.id, "unidades": 3, "stock_tienda": 1},
-                {"id_articulo": self.product.id, "unidades": 2},
+                {
+                    "id_articulo": self.product.default_code,
+                    "unidades": 3,
+                    "stock_tienda": 1,
+                },
+                {"id_articulo": self.product.default_code, "unidades": 2},
             ],
         }
         payload.update(extra)
@@ -121,8 +128,8 @@ class TestPdaStoreDemand(TransactionCase):
 
     def test_products_without_supplier_return_warnings(self):
         data, status = self._call(self._payload(lineas=[
-            {"id_articulo": self.product.id, "unidades": 1},
-            {"id_articulo": self.unlinked.id, "unidades": "2"},
+            {"id_articulo": self.product.default_code, "unidades": 1},
+            {"id_articulo": self.unlinked.default_code, "unidades": "2"},
         ], nota=""))
         self.assertEqual(status, 200, data)
         self.assertEqual(
@@ -158,12 +165,18 @@ class TestPdaStoreDemand(TransactionCase):
             self._payload(lineas=[]),
             self._payload(lineas="x"),
             self._payload(lineas=[{"id_articulo": i, "unidades": 1} for i in range(501)]),
-            self._payload(lineas=[{"id_articulo": self.product.id, "unidades": 0}]),
+            self._payload(lineas=[{
+                "id_articulo": self.product.default_code, "unidades": 0,
+            }]),
             self._payload(lineas=[{"id_articulo": "abc", "unidades": 1}]),
             self._payload(lineas=["no-dict"]),
             self._payload(lineas=[{"id_articulo": 99999999, "unidades": 1}]),
-            self._payload(lineas=[{"id_articulo": self.no_purchase.id, "unidades": 1}]),
-            self._payload(lineas=[{"id_articulo": self.product.id, "unidades": float("nan")}]),
+            self._payload(lineas=[{
+                "id_articulo": self.no_purchase.default_code, "unidades": 1,
+            }]),
+            self._payload(lineas=[{
+                "id_articulo": self.product.default_code, "unidades": float("nan"),
+            }]),
         ):
             data, status = self._call(payload)
             self.assertEqual(status, 400, data)
@@ -240,7 +253,11 @@ class TestPdaStoreDemand(TransactionCase):
 
     def test_shop_stock_is_stored(self):
         data, status = self._call(self._payload(lineas=[
-            {"id_articulo": self.product.id, "unidades": 2.5, "stock_tienda": 3},
+            {
+                "id_articulo": self.product.default_code,
+                "unidades": 2.5,
+                "stock_tienda": 3,
+            },
         ]))
         self.assertEqual(status, 200, data)
         line = self._line(data)
@@ -255,7 +272,11 @@ class TestPdaStoreDemand(TransactionCase):
 
     def test_shop_stock_zero_is_reported(self):
         data, status = self._call(self._payload(lineas=[
-            {"id_articulo": self.product.id, "unidades": 1, "stock_tienda": 0},
+            {
+                "id_articulo": self.product.default_code,
+                "unidades": 1,
+                "stock_tienda": 0,
+            },
         ]))
         self.assertEqual(status, 200, data)
         line = self._line(data)
@@ -268,8 +289,16 @@ class TestPdaStoreDemand(TransactionCase):
 
     def test_missing_shop_stock_is_warning(self):
         data, status = self._call(self._payload(lineas=[
-            {"id_articulo": self.product.id, "unidades": 1, "stock_tienda": None},
-            {"id_articulo": self.unlinked.id, "unidades": 1, "stock_tienda": "4"},
+            {
+                "id_articulo": self.product.default_code,
+                "unidades": 1,
+                "stock_tienda": None,
+            },
+            {
+                "id_articulo": self.unlinked.default_code,
+                "unidades": 1,
+                "stock_tienda": "4",
+            },
         ]))
         self.assertEqual(status, 200, data)
         line = self._line(data)
@@ -283,16 +312,24 @@ class TestPdaStoreDemand(TransactionCase):
     def test_rejects_invalid_shop_stock(self):
         for value in (-1, "abc", True, [], float("inf"), float("nan")):
             data, status = self._call(self._payload(lineas=[
-                {"id_articulo": self.product.id, "unidades": 1, "stock_tienda": value},
+                {
+                    "id_articulo": self.product.default_code,
+                    "unidades": 1,
+                    "stock_tienda": value,
+                },
             ]))
             self.assertEqual(status, 400, (value, data))
             self.assertEqual(data["code"], "INVALID_DEMAND")
-            self.assertIn(str(self.product.id), data["message"])
+            self.assertIn(self.product.default_code, data["message"])
 
     def test_repeated_product_uses_reported_shop_stock(self):
         data, status = self._call(self._payload(lineas=[
-            {"id_articulo": self.product.id, "unidades": 2, "stock_tienda": 7},
-            {"id_articulo": self.product.id, "unidades": 3},
+            {
+                "id_articulo": self.product.default_code,
+                "unidades": 2,
+                "stock_tienda": 7,
+            },
+            {"id_articulo": self.product.default_code, "unidades": 3},
         ]))
         self.assertEqual(status, 200, data)
         line = self._line(data)
@@ -303,14 +340,26 @@ class TestPdaStoreDemand(TransactionCase):
 
     def test_repeated_product_last_reported_stock_wins(self):
         data, _status = self._call(self._payload(lineas=[
-            {"id_articulo": self.product.id, "unidades": 2, "stock_tienda": 7},
-            {"id_articulo": self.product.id, "unidades": 3, "stock_tienda": 4},
+            {
+                "id_articulo": self.product.default_code,
+                "unidades": 2,
+                "stock_tienda": 7,
+            },
+            {
+                "id_articulo": self.product.default_code,
+                "unidades": 3,
+                "stock_tienda": 4,
+            },
         ]))
         self.assertEqual(self._line(data).shop_stock_qty, 4)
 
     def test_duplicate_does_not_update_shop_stock(self):
         payload = self._payload(lineas=[
-            {"id_articulo": self.product.id, "unidades": 2, "stock_tienda": 3},
+            {
+                "id_articulo": self.product.default_code,
+                "unidades": 2,
+                "stock_tienda": 3,
+            },
         ])
         first, _status = self._call(payload)
         payload["lineas"][0]["stock_tienda"] = 9
@@ -343,10 +392,66 @@ class TestPdaStoreDemand(TransactionCase):
         order = self.env["purchase.order"].create({"partner_id": self.supplier.id})
         arch = order.get_views([(False, "form")])["views"]["form"]["arch"]
         self.assertIn('name="shop_stock_qty"', arch)
-        with Form(order) as order_form:
-            with order_form.order_line.new() as line:
-                line.product_id = self.product
-                line.product_qty = 2
-                line.shop_stock_qty = 6
+        with Form(order) as order_form, order_form.order_line.new() as line:
+            line.product_id = self.product
+            line.product_qty = 2
+            line.shop_stock_qty = 6
         self.assertEqual(order.order_line.shop_stock_qty, 6)
         self.assertTrue(order.order_line.shop_stock_reported)
+
+    def test_article_code_is_alphanumeric(self):
+        """``id_articulo`` es la Referencia y se busca tal cual, sin perder ceros."""
+        product_model = self.env["product.product"]
+        leading_zero = product_model.create({
+            "name": "Ceros a la izquierda", "type": "consu", "purchase_ok": True,
+            "default_code": "010001",
+        })
+        without_zero = product_model.create({
+            "name": "Sin cero", "type": "consu", "purchase_ok": True,
+            "default_code": "10001",
+        })
+        trailing_zeros = product_model.create({
+            "name": "Ceros a la derecha", "type": "consu", "purchase_ok": True,
+            "default_code": "1230100",
+        })
+        data, status = self._call(self._payload(lineas=[
+            {"id_articulo": "010001", "unidades": 1},
+            {"id_articulo": " 010001 ", "unidades": 2},
+            {"id_articulo": "1230100", "unidades": 3},
+            {"id_articulo": 109040, "unidades": 4},
+        ]))
+        self.assertEqual(status, 200, data)
+        quantities = {
+            line.product_id: line.product_qty
+            for line in self._order(data).order_line
+        }
+        self.assertEqual(quantities, {
+            leading_zero: 3.0, trailing_zeros: 3.0, self.product: 4.0,
+        })
+        self.assertNotIn(without_zero, quantities)
+        references = {warning["referencia"] for warning in data["avisos"]}
+        self.assertIn("010001", references)
+
+    def test_article_code_is_not_an_internal_id(self):
+        data, status = self._call(self._payload(lineas=[
+            {"id_articulo": self.unlinked.id, "unidades": 1},
+        ]))
+        self.assertEqual(status, 400, data)
+        self.assertEqual(data["code"], "INVALID_DEMAND")
+
+    def test_unknown_article_code_keeps_zeros_in_error(self):
+        data, status = self._call(self._payload(lineas=[
+            {"id_articulo": "0100990", "unidades": 1},
+        ]))
+        self.assertEqual(status, 400, data)
+        self.assertEqual(data["code"], "INVALID_DEMAND")
+        self.assertIn("0100990", data["message"])
+
+    def test_rejects_invalid_article_values(self):
+        for article in (None, "", "   ", True, 1.5, ["010001"]):
+            with self.subTest(article=article):
+                data, status = self._call(self._payload(lineas=[
+                    {"id_articulo": article, "unidades": 1},
+                ]))
+                self.assertEqual(status, 400, data)
+                self.assertEqual(data["code"], "INVALID_DEMAND")
