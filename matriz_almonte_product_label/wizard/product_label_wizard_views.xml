@@ -6,7 +6,7 @@
         <field name="name">matriz_almonte_product_label_wizard.form</field>
         <field name="model">matriz_almonte_product_label_wizard</field>
         <field name="arch" type="xml">
-            <form string="Imprimir etiquetas (Brother QL-700)">
+            <form string="Imprimir Etiquetas Hermandad">
                 <group>
                     <field
                         name="product_ids"
@@ -36,7 +36,7 @@
     </record>
 
     <record id="action_matriz_almonte_product_label_wizard" model="ir.actions.act_window">
-        <field name="name">Imprimir etiquetas (Brother QL-700)</field>
+        <field name="name">Imprimir Etiquetas Hermandad</field>
         <field name="res_model">matriz_almonte_product_label_wizard</field>
         <field name="view_mode">form</field>
         <field name="target">new</field>
@@ -45,7 +45,7 @@
     </record>
 
     <record id="action_matriz_almonte_product_label_wizard_tmpl" model="ir.actions.act_window">
-        <field name="name">Imprimir etiquetas (Brother QL-700)</field>
+        <field name="name">Imprimir Etiquetas Hermandad</field>
         <field name="res_model">matriz_almonte_product_label_wizard</field>
         <field name="view_mode">form</field>
         <field name="target">new</field>

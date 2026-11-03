@@ -24,7 +24,7 @@ Uso
 1. Ir a la ficha de un producto (o seleccionar varios desde la vista de
    lista de productos o variantes).
 2. Pulsar el botón **Etiqueta QL-700** (en la ficha) o usar la acción
-   **Imprimir etiquetas (Brother QL-700)** desde el menú de acciones
+   **Imprimir Etiquetas Hermandad** desde el menú de acciones
    (⚙) de la vista de lista.
 3. Indicar el número de etiquetas a imprimir por producto y pulsar
    **Imprimir**.
