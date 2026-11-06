@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_matriz_almonte_pda_inventory_list" model="ir.ui.view">
+        <field name="name">matriz.almonte.pda.inventory.list</field>
+        <field name="model">matriz.almonte.pda.inventory</field>
+        <field name="arch" type="xml">
+            <list string="Inventarios PDA" create="false" edit="false" delete="false">
+                <field name="name" />
+                <field name="date" />
+                <field name="warehouse_id" />
+                <field name="token_id" />
+                <field name="user_id" widget="many2one_avatar_user" />
+                <field name="counted_count" />
+                <field name="adjusted_count" />
+                <field name="zeroed_count" />
+                <field
+                    name="skipped_count"
+                    decoration-warning="skipped_count"
+                    optional="show"
+                />
+                <field name="company_id" groups="base.group_multi_company" />
+            </list>
+        </field>
+    </record>
+
+    <record id="view_matriz_almonte_pda_inventory_form" model="ir.ui.view">
+        <field name="name">matriz.almonte.pda.inventory.form</field>
+        <field name="model">matriz.almonte.pda.inventory</field>
+        <field name="arch" type="xml">
+            <form string="Inventario PDA" create="false" edit="false" delete="false">
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button
+                            name="action_view_moves"
+                            type="object"
+                            class="oe_stat_button"
+                            icon="fa-exchange"
+                            invisible="not move_count"
+                        >
+                            <field name="move_count" widget="statinfo" />
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <h1>
+                            <field name="name" />
+                        </h1>
+                    </div>
+                    <group>
+                        <group>
+                            <field name="warehouse_id" />
+                            <field name="location_id" />
+                            <field name="token_id" />
+                            <field name="user_id" />
+                        </group>
+                        <group>
+                            <field name="date" />
+                            <field name="pda_uuid" />
+                            <field name="counted_count" />
+                            <field name="adjusted_count" />
+                            <field name="zeroed_count" />
+                            <field name="skipped_count" />
+                            <field
+                                name="company_id"
+                                groups="base.group_multi_company"
+                            />
+                        </group>
+                    </group>
+                    <field name="note" placeholder="Sin nota" invisible="not note" />
+                    <field name="line_ids">
+                        <list
+                            decoration-muted="state == 'no_change'"
+                            decoration-warning="state == 'skipped'"
+                            decoration-danger="state == 'adjusted' and not counted"
+                        >
+                            <field name="product_id" />
+                            <field name="pda_ref" optional="hide" />
+                            <field name="counted" />
+                            <field name="theoretical_qty" />
+                            <field name="counted_qty" />
+                            <field name="difference_qty" />
+                            <field name="state" />
+                            <field name="skip_reason" optional="show" />
+                        </list>
+                    </field>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_matriz_almonte_pda_inventory_search" model="ir.ui.view">
+        <field name="name">matriz.almonte.pda.inventory.search</field>
+        <field name="model">matriz.almonte.pda.inventory</field>
+        <field name="arch" type="xml">
+            <search string="Buscar inventarios PDA">
+                <field name="name" />
+                <field name="pda_uuid" />
+                <field name="warehouse_id" />
+                <field name="token_id" />
+                <field name="line_ids" string="Artículo" filter_domain="[('line_ids.product_id', 'ilike', self)]" />
+                <filter
+                    name="filter_skipped"
+                    string="Con artículos sin ajustar"
+                    domain="[('skipped_count', '>', 0)]"
+                />
+                <separator />
+                <group name="group_by">
+                    <filter
+                        name="group_warehouse"
+                        string="Almacén"
+                        context="{'group_by': 'warehouse_id'}"
+                    />
+                    <filter
+                        name="group_token"
+                        string="PDA"
+                        context="{'group_by': 'token_id'}"
+                    />
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_matriz_almonte_pda_inventory" model="ir.actions.act_window">
+        <field name="name">Inventarios PDA</field>
+        <field name="res_model">matriz.almonte.pda.inventory</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_matriz_almonte_pda_inventory_search" />
+        <field name="help" type="html">
+            <p class="o_view_nocontent_empty_folder">
+                Todavía no se ha recibido ningún inventario desde las PDA
+            </p>
+            <p>
+                Cada recuento enviado por una PDA se aplica en el almacén de su
+                tienda y queda registrado aquí con el stock anterior, lo contado
+                y el ajuste realizado.
+            </p>
+        </field>
+    </record>
+
+    <menuitem
+        id="menu_matriz_almonte_pda_inventory"
+        name="Inventarios PDA"
+        parent="stock.menu_stock_adjustments"
+        action="action_matriz_almonte_pda_inventory"
+        sequence="50"
+    />
+</odoo>

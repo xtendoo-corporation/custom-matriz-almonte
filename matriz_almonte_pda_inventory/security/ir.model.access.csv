@@ -1,0 +1,5 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_matriz_almonte_pda_inventory_stock_user,matriz.almonte.pda.inventory stock user,model_matriz_almonte_pda_inventory,stock.group_stock_user,1,0,0,0
+access_matriz_almonte_pda_inventory_line_stock_user,matriz.almonte.pda.inventory.line stock user,model_matriz_almonte_pda_inventory_line,stock.group_stock_user,1,0,0,0
+access_matriz_almonte_pda_inventory_pda_admin,matriz.almonte.pda.inventory pda admin,model_matriz_almonte_pda_inventory,matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin,1,0,0,0
+access_matriz_almonte_pda_inventory_line_pda_admin,matriz.almonte.pda.inventory.line pda admin,model_matriz_almonte_pda_inventory_line,matriz_almonte_pda_sale_import.group_matriz_almonte_pda_admin,1,0,0,0
