@@ -32,6 +32,12 @@ filtro «Para aplicar»), igual que si se tecleara en esa pantalla. **No mueve
 stock**: alguien en Odoo revisa la diferencia y pulsa «Aplicar», y entonces el
 stock del artículo pasa a ser lo contado.
 
+- Cada recuento queda marcado con la PDA que lo envió (columna «Recuento PDA»,
+  filtro «Desde PDA»). Al aplicarlo, el movimiento de ajuste lleva esa
+  referencia (`PDA <nombre del token>`) en *Inventario > Informes > Historial
+  de movimientos*. Si alguien cambia a mano la cantidad contada, la marca se
+  quita y el ajuste queda como uno normal de Odoo.
+- Cada envío deja en el log de Odoo las referencias y unidades recibidas.
 - Los artículos que no se envían **no se tocan**.
 - Reenviar el mismo recuento deja la misma cantidad contada (no se suma).
   Un recuento nuevo de un artículo sustituye al pendiente anterior.

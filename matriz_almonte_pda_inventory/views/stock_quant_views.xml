@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_stock_quant_tree_inventory_editable_pda" model="ir.ui.view">
+        <field name="name">stock.quant.inventory.list.editable.pda</field>
+        <field name="model">stock.quant</field>
+        <field name="inherit_id" ref="stock.view_stock_quant_tree_inventory_editable" />
+        <field name="arch" type="xml">
+            <field name="user_id" position="after">
+                <field name="pda_count_origin" optional="show" />
+            </field>
+        </field>
+    </record>
+
+    <record id="quant_search_view_pda" model="ir.ui.view">
+        <field name="name">stock.quant.search.pda</field>
+        <field name="model">stock.quant</field>
+        <field name="inherit_id" ref="stock.quant_search_view" />
+        <field name="arch" type="xml">
+            <filter name="to_apply" position="after">
+                <filter
+                    name="from_pda"
+                    string="Desde PDA"
+                    domain="[('pda_count_origin', '!=', False)]"
+                />
+            </filter>
+        </field>
+    </record>
+</odoo>

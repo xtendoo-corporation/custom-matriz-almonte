@@ -82,6 +82,13 @@ class MatrizAlmontePdaInventoryController(http.Controller):
 
         try:
             quantities = self._parse_lines(payload.get("lineas"))
+            _logger.info(
+                "PDA inventario %s (%s) recibido, %s referencias: %s",
+                reference,
+                token_rec.name,
+                len(quantities),
+                self._summary(quantities),
+            )
             counts, warnings = self._resolve_products(quantities, company)
             with request.env.cr.savepoint():
                 quants = (
@@ -91,6 +98,7 @@ class MatrizAlmontePdaInventoryController(http.Controller):
                         warehouse.lot_stock_id,
                         counts,
                         token_rec.sale_user_id or request.env.user,
+                        self._origin(token_rec),
                     )
                 )
         except (UserError, ValidationError) as exc:
@@ -128,6 +136,19 @@ class MatrizAlmontePdaInventoryController(http.Controller):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _origin(token_rec):
+        """Referencia con la que se identifican los ajustes de esta PDA."""
+        return "PDA %s" % token_rec.name
+
+    @staticmethod
+    def _summary(quantities, limit=50):
+        """``ref=unidades`` de las primeras líneas, para el log."""
+        items = ["%s=%g" % (ref, qty) for ref, qty in list(quantities.items())[:limit]]
+        if len(quantities) > limit:
+            items.append("… (+%s)" % (len(quantities) - limit))
+        return ", ".join(items)
 
     @staticmethod
     def _read_payload():

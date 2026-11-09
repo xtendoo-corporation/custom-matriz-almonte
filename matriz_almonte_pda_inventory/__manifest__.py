@@ -5,13 +5,13 @@
         "API PDA que registra el recuento físico de una tienda como cantidad "
         "contada en el Inventario físico de Odoo, pendiente de aplicar."
     ),
-    "version": "19.0.2.0.0",
+    "version": "19.0.2.1.0",
     "category": "Inventory/Inventory",
     "author": "Xtendoo",
     "website": "https://www.xtendoo.es",
     "license": "LGPL-3",
     "depends": ["stock", "matriz_almonte_pda_sale_import"],
-    "data": [],
+    "data": ["views/stock_quant_views.xml"],
     "installable": True,
     "application": False,
     "auto_install": False,

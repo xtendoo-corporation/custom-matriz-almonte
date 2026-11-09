@@ -121,6 +121,42 @@ class TestPdaInventory(TransactionCase):
         self.assertEqual(self._quant(self.ref2).quantity, 3.5)
         self.assertFalse(quants.filtered("inventory_quantity_set"))
 
+    def test_pda_adjustments_are_distinguishable(self):
+        self._call(PDA_PAYLOAD)
+        quant1, quant2 = self._quant(self.ref1), self._quant(self.ref2)
+        self.assertEqual(quant1.pda_count_origin, "PDA PDA Inventario")
+        self.assertEqual(
+            self.env["stock.quant"].search(
+                [("pda_count_origin", "!=", False), ("location_id", "=", self.stock.id)]
+            ),
+            quant1 | quant2,
+        )
+        # Aplicar desde el wizard «Aplicar todo» (que propone su propio
+        # nombre) mantiene la referencia de la PDA.
+        (quant1 | quant2).with_context(
+            inventory_name="Cantidad de producto actualizada"
+        )._apply_inventory()
+        moves = self.env["stock.move"].search(
+            [("is_inventory", "=", True), ("product_id", "in", [self.ref1.id, self.ref2.id])]
+        )
+        self.assertEqual(len(moves), 2)
+        self.assertEqual(set(moves.mapped("reference")), {"PDA PDA Inventario"})
+        self.assertFalse((quant1 | quant2).filtered("pda_count_origin"))
+
+    def test_manual_edit_or_clear_removes_pda_mark(self):
+        self._call(PDA_PAYLOAD)
+        quant1, quant2 = self._quant(self.ref1), self._quant(self.ref2)
+        quant1.inventory_quantity = 11
+        self.assertFalse(quant1.pda_count_origin)
+        quant1.action_apply_inventory()
+        move = self.env["stock.move"].search(
+            [("is_inventory", "=", True), ("product_id", "=", self.ref1.id)]
+        )
+        self.assertNotIn("PDA", move.reference)
+        quant2.action_clear_inventory_quantity()
+        self.assertFalse(quant2.pda_count_origin)
+        self.assertFalse(quant2.inventory_quantity_set)
+
     def test_resend_and_repeated_lines(self):
         self._call(PDA_PAYLOAD)
         data, status = self._call(PDA_PAYLOAD)
