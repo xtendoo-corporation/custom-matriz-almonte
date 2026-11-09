@@ -18,6 +18,11 @@ _logger = logging.getLogger(__name__)
 _MAX_PAYLOAD_BYTES = 2 * 1024 * 1024
 _MAX_LINES = 20000
 
+NOT_FOUND = "Artículo inexistente en Odoo."
+AMBIGUOUS = "La referencia está asignada a varios artículos en Odoo."
+NOT_STORABLE = "Artículo sin control de stock: no se inventaría."
+TRACKED = "Artículo con lotes/números de serie: contarlo desde Odoo."
+
 
 def _json_response(data, status=200):
     return request.make_response(
@@ -30,17 +35,18 @@ def _json_response(data, status=200):
     )
 
 
-def _error(code, message, status=400, **extra):
-    payload = {"success": False, "code": code, "message": message}
-    payload.update(extra)
-    return _json_response(payload, status=status)
+def _error(code, message, status=400):
+    return _json_response(
+        {"success": False, "code": code, "message": message}, status=status
+    )
 
 
 class MatrizAlmontePdaInventoryController(http.Controller):
-    """Inventario completo del almacén de la tienda enviado desde la PDA.
+    """Recuento físico de la tienda enviado desde la PDA.
 
-    El almacén sale del punto de venta del token y el usuario responsable es
-    el «Usuario de Ventas» del token. El recuento se aplica al recibirlo.
+    El almacén sale del punto de venta del token y el recuento se asigna a su
+    «Usuario de Ventas». Las cantidades quedan como «Cantidad contada» en el
+    Inventario físico estándar de Odoo, pendientes de aplicar.
     """
 
     _ROUTE = "/api/matriz_almonte/pda/inventory"
@@ -65,10 +71,6 @@ class MatrizAlmontePdaInventoryController(http.Controller):
         if error_response:
             return error_response
 
-        uuid = str(payload.get("uuid") or "").strip()
-        if not uuid:
-            return _error("MISSING_UUID", "El campo 'uuid' es obligatorio.")
-
         warehouse = token_rec.tienda_id.picking_type_id.warehouse_id
         if not warehouse:
             return _error(
@@ -76,75 +78,56 @@ class MatrizAlmontePdaInventoryController(http.Controller):
                 "El punto de venta del token no tiene almacén asociado.",
             )
         company = warehouse.company_id
-        inventory_model = request.env["matriz.almonte.pda.inventory"].with_company(
-            company
-        )
-        existing = inventory_model.search(
-            [("pda_uuid", "=", uuid), ("company_id", "=", company.id)], limit=1
-        )
-        if existing:
-            return self._ok(existing, duplicate=True)
+        reference = str(payload.get("uuid") or "").strip()
 
         try:
-            counts = self._prepare_counts(payload.get("lineas"), company)
-            note = str(payload.get("nota") or "").strip()
+            quantities = self._parse_lines(payload.get("lineas"))
+            counts, warnings = self._resolve_products(quantities, company)
             with request.env.cr.savepoint():
-                inventory = inventory_model._apply_pda_count(
-                    token_rec, warehouse, uuid, counts, note=note
+                quants = (
+                    request.env["stock.quant"]
+                    .with_company(company)
+                    ._pda_set_counted_quantities(
+                        warehouse.lot_stock_id,
+                        counts,
+                        token_rec.sale_user_id or request.env.user,
+                    )
                 )
         except (UserError, ValidationError) as exc:
-            _logger.warning("PDA inventario %s rechazado: %s", uuid, exc)
-            return _error(
-                "INVALID_INVENTORY", str(exc.args[0] if exc.args else exc)
-            )
+            _logger.warning("PDA inventario %s rechazado: %s", reference, exc)
+            return _error("INVALID_INVENTORY", str(exc.args[0] if exc.args else exc))
         except Exception:
-            _logger.exception("PDA inventario %s: error inesperado", uuid)
-            return _error("SERVER_ERROR", "Error interno al aplicar el inventario.", 500)
+            _logger.exception("PDA inventario %s: error inesperado", reference)
+            return _error(
+                "SERVER_ERROR", "Error interno al registrar el inventario.", 500
+            )
 
         _logger.info(
-            "PDA inventario %s aplicado en %s (%s contados, %s ajustados)",
-            inventory.name,
+            "PDA inventario %s (%s): %s artículos contados en %s, %s avisos",
+            reference,
+            token_rec.name,
+            len(quants),
             warehouse.name,
-            inventory.counted_count,
-            inventory.adjusted_count,
+            len(warnings),
         )
-        return self._ok(inventory)
+        return _json_response(
+            {
+                "success": True,
+                "code": "INVENTORY_COUNTED",
+                "message": (
+                    "Recuento registrado en %s: %s artículos pendientes de aplicar "
+                    "en el Inventario físico." % (warehouse.name, len(quants))
+                ),
+                "almacen": warehouse.name,
+                "ubicacion": warehouse.lot_stock_id.complete_name,
+                "articulos_contados": len(quants),
+                "avisos": warnings,
+            }
+        )
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _ok(inventory, duplicate=False):
-        warnings = [
-            {
-                "ref": line.pda_ref or line.product_id.default_code or "",
-                "id_articulo": line.product_id.id,
-                "nombre": line.product_id.display_name,
-                "mensaje": line.skip_reason,
-            }
-            for line in inventory.line_ids
-            if line.state == "skipped"
-        ]
-        return _json_response(
-            {
-                "success": True,
-                "code": "DUPLICATE" if duplicate else "INVENTORY_APPLIED",
-                "duplicate": duplicate,
-                "message": (
-                    "El inventario ya estaba aplicado en Odoo: %s" % inventory.name
-                    if duplicate
-                    else "Inventario aplicado: %s" % inventory.name
-                ),
-                "inventory_id": inventory.id,
-                "inventory_name": inventory.name,
-                "almacen": inventory.warehouse_id.name,
-                "articulos_contados": inventory.counted_count,
-                "articulos_ajustados": inventory.adjusted_count,
-                "articulos_a_cero": inventory.zeroed_count,
-                "avisos": warnings,
-            }
-        )
 
     @staticmethod
     def _read_payload():
@@ -167,15 +150,15 @@ class MatrizAlmontePdaInventoryController(http.Controller):
     def _parse_ref(line):
         """Referencia (``default_code``) de la línea, siempre como texto.
 
-        Se acepta ``ref`` o, por compatibilidad con el resto de la API,
-        ``id_articulo``. Un número JSON se trata como la misma referencia en
-        texto; nunca se convierte a número para no perder ceros.
+        Se acepta ``id_articulo`` (formato de la PDA) o ``ref``. Un número JSON
+        se trata como la misma referencia en texto; nunca se convierte a número
+        para no perder ceros.
         """
-        ref = line.get("ref", line.get("id_articulo"))
+        ref = line.get("id_articulo", line.get("ref"))
         if isinstance(ref, int) and not isinstance(ref, bool):
             ref = str(ref)
         if not isinstance(ref, str) or not ref.strip():
-            raise ValidationError("Línea sin 'ref' de artículo válida.")
+            raise ValidationError("Línea sin 'id_articulo' válido.")
         return ref.strip()
 
     @staticmethod
@@ -196,12 +179,11 @@ class MatrizAlmontePdaInventoryController(http.Controller):
         return value
 
     @classmethod
-    def _prepare_counts(cls, lines, company):
-        """Valida las líneas y devuelve ``{product: (cantidad, ref)}``.
+    def _parse_lines(cls, lines):
+        """Valida las líneas y devuelve ``{ref: unidades}``.
 
         Un artículo repetido (p. ej. contado en dos estanterías) suma sus
-        unidades. Como el inventario es completo y pone a 0 lo no contado, una
-        referencia inexistente o ambigua rechaza todo el inventario.
+        unidades. Una línea mal formada rechaza el envío entero.
         """
         if not isinstance(lines, list) or not lines:
             raise ValidationError("El inventario no tiene líneas.")
@@ -213,27 +195,46 @@ class MatrizAlmontePdaInventoryController(http.Controller):
                 raise ValidationError("Línea de inventario no válida.")
             ref = cls._parse_ref(line)
             quantities[ref] = quantities.get(ref, 0.0) + cls._parse_qty(line, ref)
+        return quantities
 
+    @staticmethod
+    def _resolve_products(quantities, company):
+        """Devuelve ``({product: unidades}, avisos)``.
+
+        Las referencias que no se pueden inventariar no bloquean el resto del
+        recuento: se devuelven como avisos.
+        """
         products = request.env["product.product"].search(
             [
                 ("default_code", "in", list(quantities)),
                 ("company_id", "in", [False, company.id]),
             ]
         )
-        products_by_ref = {}
+        by_ref = {}
         for product in products:
-            products_by_ref.setdefault(product.default_code, []).append(product)
-        missing = [ref for ref in quantities if ref not in products_by_ref]
-        if missing:
-            raise ValidationError(
-                "Artículos inexistentes en Odoo: %s." % ", ".join(missing)
+            by_ref.setdefault(product.default_code, []).append(product)
+        counts = {}
+        warnings = []
+
+        def warn(ref, message, product=None):
+            warnings.append(
+                {
+                    "id_articulo": ref,
+                    "nombre": product.display_name if product else "",
+                    "mensaje": message,
+                }
             )
-        ambiguous = [ref for ref, prods in products_by_ref.items() if len(prods) > 1]
-        if ambiguous:
-            raise ValidationError(
-                "Referencias asignadas a varios artículos en Odoo: %s."
-                % ", ".join(sorted(ambiguous))
-            )
-        return {
-            products_by_ref[ref][0]: (qty, ref) for ref, qty in quantities.items()
-        }
+
+        for ref, qty in quantities.items():
+            matches = by_ref.get(ref, [])
+            if not matches:
+                warn(ref, NOT_FOUND)
+            elif len(matches) > 1:
+                warn(ref, AMBIGUOUS)
+            elif not matches[0].is_storable:
+                warn(ref, NOT_STORABLE, matches[0])
+            elif matches[0].tracking != "none":
+                warn(ref, TRACKED, matches[0])
+            else:
+                counts[matches[0]] = qty
+        return counts, warnings
