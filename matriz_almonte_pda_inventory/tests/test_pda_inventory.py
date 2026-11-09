@@ -98,6 +98,10 @@ class TestPdaInventory(TransactionCase):
     def test_pda_payload_leaves_counts_pending(self):
         data, status = self._call(PDA_PAYLOAD)
         self.assertEqual(status, 200, data)
+        self.assertIs(data["success"], True)
+        self.assertEqual(data["message"], "Inventario registrado")
+        self.assertIsInstance(data["order_id"], int)
+        self.assertEqual(data["order_name"], "INV/%05d" % data["order_id"])
         self.assertEqual(data["code"], "INVENTORY_COUNTED")
         self.assertEqual(data["almacen"], self.shop.name)
         self.assertEqual(data["articulos_contados"], 2)
@@ -121,10 +125,22 @@ class TestPdaInventory(TransactionCase):
         self.assertEqual(self._quant(self.ref2).quantity, 3.5)
         self.assertFalse(quants.filtered("inventory_quantity_set"))
 
+    def test_each_count_gets_its_own_number(self):
+        first, _status = self._call(PDA_PAYLOAD)
+        second, _status = self._call(PDA_PAYLOAD)
+        self.assertEqual(second["order_id"], first["order_id"] + 1)
+        self.assertNotEqual(second["order_name"], first["order_name"])
+        # El recuento pendiente lleva el número del último envío.
+        self.assertEqual(
+            self._quant(self.ref1).pda_count_origin,
+            "%s (PDA PDA Inventario)" % second["order_name"],
+        )
+
     def test_pda_adjustments_are_distinguishable(self):
-        self._call(PDA_PAYLOAD)
+        data, _status = self._call(PDA_PAYLOAD)
+        origin = "%s (PDA PDA Inventario)" % data["order_name"]
         quant1, quant2 = self._quant(self.ref1), self._quant(self.ref2)
-        self.assertEqual(quant1.pda_count_origin, "PDA PDA Inventario")
+        self.assertEqual(quant1.pda_count_origin, origin)
         self.assertEqual(
             self.env["stock.quant"].search(
                 [("pda_count_origin", "!=", False), ("location_id", "=", self.stock.id)]
@@ -140,7 +156,7 @@ class TestPdaInventory(TransactionCase):
             [("is_inventory", "=", True), ("product_id", "in", [self.ref1.id, self.ref2.id])]
         )
         self.assertEqual(len(moves), 2)
-        self.assertEqual(set(moves.mapped("reference")), {"PDA PDA Inventario"})
+        self.assertEqual(set(moves.mapped("reference")), {origin})
         self.assertFalse((quant1 | quant2).filtered("pda_count_origin"))
 
     def test_manual_edit_or_clear_removes_pda_mark(self):

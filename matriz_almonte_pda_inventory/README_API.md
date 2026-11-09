@@ -32,9 +32,10 @@ filtro «Para aplicar»), igual que si se tecleara en esa pantalla. **No mueve
 stock**: alguien en Odoo revisa la diferencia y pulsa «Aplicar», y entonces el
 stock del artículo pasa a ser lo contado.
 
-- Cada recuento queda marcado con la PDA que lo envió (columna «Recuento PDA»,
-  filtro «Desde PDA»). Al aplicarlo, el movimiento de ajuste lleva esa
-  referencia (`PDA <nombre del token>`) en *Inventario > Informes > Historial
+- Cada envío recibe un número (`INV/00045`) y los recuentos quedan marcados
+  con ese número y la PDA que lo envió (columna «Recuento PDA», filtro «Desde
+  PDA»). Al aplicarlo, el movimiento de ajuste lleva esa referencia
+  (`INV/00045 (PDA <nombre del token>)`) en *Inventario > Informes > Historial
   de movimientos*. Si alguien cambia a mano la cantidad contada, la marca se
   quita y el ajuste queda como uno normal de Odoo.
 - Cada envío deja en el log de Odoo las referencias y unidades recibidas.
@@ -47,12 +48,17 @@ stock del artículo pasa a ser lo contado.
 - Una línea mal formada (sin `id_articulo`, unidades negativas o no numéricas)
   rechaza el envío entero (`INVALID_INVENTORY`) sin registrar nada.
 
+Respuesta:
+
 ```json
-{"success": true, "code": "INVENTORY_COUNTED",
- "message": "Recuento registrado en Olga: 2 artículos pendientes de aplicar en el Inventario físico.",
- "almacen": "Olga", "ubicacion": "OLGA/Stock", "articulos_contados": 2,
+{"success": true, "order_id": 45, "order_name": "INV/00045",
+ "message": "Inventario registrado",
+ "code": "INVENTORY_COUNTED", "almacen": "Olga", "ubicacion": "OLGA/Stock", "articulos_contados": 2,
  "avisos": [{"id_articulo": "REF009", "nombre": "", "mensaje": "Artículo inexistente en Odoo."}]}
 ```
+
+`order_id` es el número del recuento y `order_name` su referencia; el resto de
+campos son informativos.
 
 Errores (`success: false`): `MISSING_TOKEN`/`INVALID_TOKEN` (401),
 `EMPTY_BODY`, `INVALID_JSON`, `TOKEN_WITHOUT_WAREHOUSE`, `INVALID_INVENTORY`

@@ -4,6 +4,7 @@
 import json
 import logging
 import math
+import re
 
 from odoo import http
 from odoo.exceptions import UserError, ValidationError
@@ -22,6 +23,8 @@ NOT_FOUND = "Artículo inexistente en Odoo."
 AMBIGUOUS = "La referencia está asignada a varios artículos en Odoo."
 NOT_STORABLE = "Artículo sin control de stock: no se inventaría."
 TRACKED = "Artículo con lotes/números de serie: contarlo desde Odoo."
+
+SEQUENCE_CODE = "matriz.almonte.pda.inventory.count"
 
 
 def _json_response(data, status=200):
@@ -90,6 +93,7 @@ class MatrizAlmontePdaInventoryController(http.Controller):
                 self._summary(quantities),
             )
             counts, warnings = self._resolve_products(quantities, company)
+            count_id, count_name = self._next_count_number()
             with request.env.cr.savepoint():
                 quants = (
                     request.env["stock.quant"]
@@ -98,7 +102,7 @@ class MatrizAlmontePdaInventoryController(http.Controller):
                         warehouse.lot_stock_id,
                         counts,
                         token_rec.sale_user_id or request.env.user,
-                        self._origin(token_rec),
+                        self._origin(count_name, token_rec),
                     )
                 )
         except (UserError, ValidationError) as exc:
@@ -111,7 +115,8 @@ class MatrizAlmontePdaInventoryController(http.Controller):
             )
 
         _logger.info(
-            "PDA inventario %s (%s): %s artículos contados en %s, %s avisos",
+            "PDA inventario %s %s (%s): %s artículos contados en %s, %s avisos",
+            count_name,
             reference,
             token_rec.name,
             len(quants),
@@ -121,11 +126,10 @@ class MatrizAlmontePdaInventoryController(http.Controller):
         return _json_response(
             {
                 "success": True,
+                "order_id": count_id,
+                "order_name": count_name,
+                "message": "Inventario registrado",
                 "code": "INVENTORY_COUNTED",
-                "message": (
-                    "Recuento registrado en %s: %s artículos pendientes de aplicar "
-                    "en el Inventario físico." % (warehouse.name, len(quants))
-                ),
                 "almacen": warehouse.name,
                 "ubicacion": warehouse.lot_stock_id.complete_name,
                 "articulos_contados": len(quants),
@@ -138,9 +142,23 @@ class MatrizAlmontePdaInventoryController(http.Controller):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _origin(token_rec):
-        """Referencia con la que se identifican los ajustes de esta PDA."""
-        return "PDA %s" % token_rec.name
+    def _next_count_number():
+        """Número del recuento recibido: ``(45, "INV/00045")``."""
+        sequence = (
+            request.env["ir.sequence"]
+            .sudo()
+            .search([("code", "=", SEQUENCE_CODE)], limit=1)
+        )
+        if not sequence:
+            raise RuntimeError("Falta la secuencia %s" % SEQUENCE_CODE)
+        name = sequence._next()
+        number = re.search(r"(\d+)\D*$", name)
+        return (int(number.group(1)) if number else sequence.id), name
+
+    @staticmethod
+    def _origin(count_name, token_rec):
+        """Referencia con la que se identifican los ajustes de este recuento."""
+        return "%s (PDA %s)" % (count_name, token_rec.name)
 
     @staticmethod
     def _summary(quantities, limit=50):
