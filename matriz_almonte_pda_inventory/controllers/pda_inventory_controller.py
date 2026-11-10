@@ -106,19 +106,24 @@ class MatrizAlmontePdaInventoryController(http.Controller):
                 len(quantities),
                 self._summary(quantities),
             )
-            counts, warnings = self._resolve_products(quantities, company)
+            counts, warnings, skipped = self._resolve_products(quantities, company)
+            if not counts:
+                # Sin ningún artículo válido, poner a cero el resto vaciaría
+                # la tienda entera por un envío erróneo.
+                raise ValidationError(
+                    "Ninguna referencia del recuento se puede inventariar en "
+                    "Odoo: no se registra nada."
+                )
             count_id, count_name = self._next_count_number()
+            Quant = request.env["stock.quant"].with_company(company)
+            user = token_rec.sale_user_id or request.env.user
+            origin = self._origin(count_name, token_rec)
             with request.env.cr.savepoint():
-                quants = (
-                    request.env["stock.quant"]
-                    .with_company(company)
-                    ._pda_set_counted_quantities(
-                        warehouse.lot_stock_id,
-                        counts,
-                        token_rec.sale_user_id or request.env.user,
-                        self._origin(count_name, token_rec),
-                        info,
-                    )
+                quants = Quant._pda_set_counted_quantities(
+                    warehouse.lot_stock_id, counts, user, origin, info
+                )
+                zeroed = Quant._pda_zero_uncounted(
+                    warehouse.lot_stock_id, quants, skipped, user, origin, info
                 )
         except (UserError, ValidationError) as exc:
             _logger.warning("PDA inventario %s rechazado: %s", reference, exc)
@@ -130,11 +135,13 @@ class MatrizAlmontePdaInventoryController(http.Controller):
             )
 
         _logger.info(
-            "PDA inventario %s %s (%s): %s artículos contados en %s, %s avisos",
+            "PDA inventario %s %s (%s): %s artículos contados y %s a cero en %s, "
+            "%s avisos",
             count_name,
             reference,
             token_rec.name,
             len(quants),
+            len(zeroed.product_id),
             warehouse.name,
             len(warnings),
         )
@@ -148,6 +155,7 @@ class MatrizAlmontePdaInventoryController(http.Controller):
                 "almacen": warehouse.name,
                 "ubicacion": warehouse.lot_stock_id.complete_name,
                 "articulos_contados": len(quants),
+                "articulos_a_cero": len(zeroed.product_id),
                 "avisos": warnings,
             }
         )
@@ -318,10 +326,11 @@ class MatrizAlmontePdaInventoryController(http.Controller):
 
     @staticmethod
     def _resolve_products(quantities, company):
-        """Devuelve ``({product: unidades}, avisos)``.
+        """Devuelve ``({product: unidades}, avisos, artículos_no_contados)``.
 
         Las referencias que no se pueden inventariar no bloquean el resto del
-        recuento: se devuelven como avisos.
+        recuento: se devuelven como avisos, y sus artículos (si existen) en
+        ``artículos_no_contados`` para no ponerlos a cero.
         """
         products = request.env["product.product"].search(
             [
@@ -334,6 +343,7 @@ class MatrizAlmontePdaInventoryController(http.Controller):
             by_ref.setdefault(product.default_code, []).append(product)
         counts = {}
         warnings = []
+        skipped = request.env["product.product"]
 
         def warn(ref, message, product=None):
             warnings.append(
@@ -356,4 +366,7 @@ class MatrizAlmontePdaInventoryController(http.Controller):
                 warn(ref, TRACKED, matches[0])
             else:
                 counts[matches[0]] = qty
-        return counts, warnings
+                continue
+            for product in matches:
+                skipped |= product
+        return counts, warnings, skipped

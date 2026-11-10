@@ -34,8 +34,8 @@ class StockQuant(models.Model):
         Por cada artículo deja su cantidad contada en el quant de ``location``
         (sin lote, paquete ni propietario), igual que al escribir la «Cantidad
         contada» en *Inventario > Inventario físico*. El ajuste lo aplica
-        después alguien en Odoo con «Aplicar». Los artículos que no vienen en
-        ``counts`` no se tocan.
+        después alguien en Odoo con «Aplicar». Lo que no viene en ``counts`` se
+        pone a cero aparte, con :meth:`_pda_zero_uncounted`.
 
         :param counts: ``{product: cantidad_contada}``.
         :param user: usuario asignado al recuento.
@@ -62,6 +62,44 @@ class StockQuant(models.Model):
                 dict(vals, inventory_quantity=qty)
             )
             quants |= quant
+        return quants
+
+    @api.model
+    def _pda_zero_uncounted(self, location, counted, keep_products, user, origin, info=None):
+        """Pone a 0 (pendiente de aplicar) lo que la PDA no ha contado.
+
+        Inventario completo: cualquier quant de ``location`` o sus
+        sububicaciones con stock (o con un recuento pendiente) que no sea uno
+        de ``counted`` queda con cantidad contada 0, de forma que al aplicar
+        solo quede en stock lo inventariado.
+
+        No se tocan los artículos con lotes/números de serie (no se pueden
+        contar desde la PDA) ni ``keep_products`` (enviados por la PDA pero
+        que no se pudieron registrar).
+
+        :returns: los quants puestos a 0.
+        """
+        info = info or {}
+        quants = self.search(
+            [
+                ("location_id", "child_of", location.id),
+                ("id", "not in", counted.ids),
+                ("product_id", "not in", keep_products.ids),
+                ("product_id.tracking", "=", "none"),
+                "|",
+                ("quantity", "!=", 0),
+                ("inventory_quantity_set", "=", True),
+            ]
+        )
+        if quants:
+            vals = {
+                "inventory_quantity": 0,
+                "inventory_quantity_set": True,
+                "user_id": user.id,
+                "pda_count_origin": origin,
+            }
+            vals.update({name: info.get(name) or False for name in PDA_COUNT_FIELDS})
+            quants.with_context(pda_inventory_count=True).write(vals)
         return quants
 
     @staticmethod

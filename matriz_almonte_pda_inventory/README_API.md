@@ -56,7 +56,14 @@ stock del artículo pasa a ser lo contado.
   envío. Si alguien cambia a mano la cantidad contada, la marca se
   quita y el ajuste queda como uno normal de Odoo.
 - Cada envío deja en el log de Odoo las referencias y unidades recibidas.
-- Los artículos que no se envían **no se tocan**.
+- **Inventario completo**: todo lo que hay en el stock del almacén
+  (`<ALMACÉN>/Stock` y sus sububicaciones) y no viene en el envío queda con
+  cantidad contada **0**, también pendiente de aplicar, con la misma marca del
+  envío. Al aplicar, en la tienda solo queda lo inventariado. Excepciones: los
+  artículos con lotes/números de serie (no se cuentan desde la PDA) y los que
+  la PDA envió pero no se pudieron registrar (van en `avisos`). Si ninguna
+  referencia del envío se puede inventariar, se rechaza (`INVALID_INVENTORY`)
+  para no vaciar la tienda por error.
 - Reenviar el mismo recuento deja la misma cantidad contada (no se suma).
   Un recuento nuevo de un artículo sustituye al pendiente anterior.
 - No se inventarían (se devuelven en `avisos` y el resto se registra igual):
@@ -71,6 +78,7 @@ Respuesta:
 {"success": true, "order_id": 45, "order_name": "INV/00045",
  "message": "Inventario registrado",
  "code": "INVENTORY_COUNTED", "almacen": "Olga", "ubicacion": "OLGA/Stock", "articulos_contados": 2,
+ "articulos_a_cero": 140,
  "avisos": [{"id_articulo": "REF009", "nombre": "", "mensaje": "Artículo inexistente en Odoo."}]}
 ```
 
