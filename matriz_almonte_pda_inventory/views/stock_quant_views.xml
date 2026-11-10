@@ -7,6 +7,9 @@
         <field name="arch" type="xml">
             <field name="user_id" position="after">
                 <field name="pda_count_origin" optional="show" />
+                <field name="pda_count_start" optional="hide" />
+                <field name="pda_count_end" optional="hide" />
+                <field name="pda_count_comment" optional="show" />
             </field>
         </field>
     </record>
@@ -23,6 +26,19 @@
                     domain="[('pda_count_origin', '!=', False)]"
                 />
             </filter>
+        </field>
+    </record>
+
+    <record id="view_move_line_tree_pda" model="ir.ui.view">
+        <field name="name">stock.move.line.list.pda</field>
+        <field name="model">stock.move.line</field>
+        <field name="inherit_id" ref="stock.view_move_line_tree" />
+        <field name="arch" type="xml">
+            <field name="product_id" position="after">
+                <field name="pda_count_start" optional="hide" />
+                <field name="pda_count_end" optional="hide" />
+                <field name="pda_count_comment" optional="show" />
+            </field>
         </field>
     </record>
 </odoo>

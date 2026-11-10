@@ -5,6 +5,9 @@ import json
 import logging
 import math
 import re
+from datetime import datetime
+
+import pytz
 
 from odoo import http
 from odoo.exceptions import UserError, ValidationError
@@ -25,6 +28,16 @@ NOT_STORABLE = "Artículo sin control de stock: no se inventaría."
 TRACKED = "Artículo con lotes/números de serie: contarlo desde Odoo."
 
 SEQUENCE_CODE = "matriz.almonte.pda.inventory.count"
+
+# Formatos de fecha y hora que manda la PDA (hora local de la tienda).
+_DATETIME_FORMATS = (
+    "%d/%m/%Y %H:%M:%S",
+    "%d/%m/%Y %H:%M",
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%dT%H:%M:%S",
+)
+_DEFAULT_TZ = "Europe/Madrid"
+_MAX_COMMENT = 2000
 
 
 def _json_response(data, status=200):
@@ -85,6 +98,7 @@ class MatrizAlmontePdaInventoryController(http.Controller):
 
         try:
             quantities = self._parse_lines(payload.get("lineas"))
+            info = self._parse_count_info(payload, token_rec)
             _logger.info(
                 "PDA inventario %s (%s) recibido, %s referencias: %s",
                 reference,
@@ -103,6 +117,7 @@ class MatrizAlmontePdaInventoryController(http.Controller):
                         counts,
                         token_rec.sale_user_id or request.env.user,
                         self._origin(count_name, token_rec),
+                        info,
                     )
                 )
         except (UserError, ValidationError) as exc:
@@ -167,6 +182,71 @@ class MatrizAlmontePdaInventoryController(http.Controller):
         if len(quantities) > limit:
             items.append("… (+%s)" % (len(quantities) - limit))
         return ", ".join(items)
+
+    @staticmethod
+    def _timezone(token_rec):
+        tz_name = (
+            token_rec.sale_user_id.tz
+            or token_rec.tienda_id.company_id.partner_id.tz
+            or _DEFAULT_TZ
+        )
+        try:
+            return pytz.timezone(tz_name)
+        except pytz.UnknownTimeZoneError:
+            return pytz.timezone(_DEFAULT_TZ)
+
+    @classmethod
+    def _parse_datetime(cls, value, key, tz):
+        """Fecha y hora local de la PDA → datetime UTC sin zona (como Odoo)."""
+        if value in (None, ""):
+            return False
+        if isinstance(value, str):
+            text = value.strip()
+            for fmt in _DATETIME_FORMATS:
+                try:
+                    local = datetime.strptime(text, fmt)
+                except ValueError:
+                    continue
+                return tz.localize(local).astimezone(pytz.UTC).replace(tzinfo=None)
+        raise ValidationError(
+            "'%s' no es una fecha y hora válida (formato dd/mm/aaaa hh:mm:ss): %s"
+            % (key, value)
+        )
+
+    @classmethod
+    def _parse_count_info(cls, payload, token_rec):
+        """Inicio, envío y comentario del recuento.
+
+        Todos son opcionales. ``fecha_hora`` (formato anterior) se acepta como
+        fecha de envío.
+        """
+        tz = cls._timezone(token_rec)
+        start = cls._parse_datetime(
+            payload.get("fecha_hora_inicio"), "fecha_hora_inicio", tz
+        )
+        end_key = (
+            "fecha_hora_envio" if "fecha_hora_envio" in payload else "fecha_hora"
+        )
+        end = cls._parse_datetime(payload.get(end_key), end_key, tz)
+        if start and end and start > end:
+            raise ValidationError(
+                "La fecha de inicio del recuento es posterior a la de envío."
+            )
+        comment = payload.get("comentario")
+        if comment is None:
+            comment = ""
+        if not isinstance(comment, str):
+            raise ValidationError("'comentario' debe ser un texto.")
+        comment = comment.strip()
+        if len(comment) > _MAX_COMMENT:
+            raise ValidationError(
+                "El comentario supera %s caracteres." % _MAX_COMMENT
+            )
+        return {
+            "pda_count_start": start,
+            "pda_count_end": end,
+            "pda_count_comment": comment or False,
+        }
 
     @staticmethod
     def _read_payload():

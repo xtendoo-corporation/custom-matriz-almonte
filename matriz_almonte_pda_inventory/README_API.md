@@ -12,7 +12,10 @@ El token decide dónde y quién:
 ## POST /api/matriz_almonte/pda/inventory
 
 ```json
-{"uuid": "3f0c9c1e-...", "fecha_hora": "09/11/2026 10:35:12",
+{"uuid": "3f0c9c1e-...",
+ "fecha_hora_inicio": "09/11/2026 09:12:40",
+ "fecha_hora_envio": "09/11/2026 10:35:12",
+ "comentario": "Recuento de la sección de frutería, falta la cámara 2",
  "lineas": [{"id_articulo": "REF001", "unidades": 12},
             {"id_articulo": "REF002", "unidades": 3.5}]}
 ```
@@ -22,7 +25,15 @@ El token decide dónde y quién:
   acepta también `ref` con el mismo significado.
 - `unidades`: stock real contado, decimal ≥ 0. Si una referencia se repite
   (contada en varios sitios), las unidades se suman.
-- `uuid` y `fecha_hora` son opcionales; `uuid` solo se usa en los logs.
+- `fecha_hora_inicio` / `fecha_hora_envio`: inicio y envío del recuento, en
+  hora local de la tienda (`dd/mm/aaaa hh:mm:ss`; también `dd/mm/aaaa hh:mm`
+  o ISO). Se toma la zona horaria del «Usuario de Ventas» del token (si no
+  tiene, Europe/Madrid). El inicio no puede ser posterior al envío. Se acepta
+  `fecha_hora` (formato anterior) como fecha de envío.
+- `comentario`: texto libre del recuento (máx. 2000 caracteres).
+- Todos los campos salvo `lineas` son opcionales; `uuid` solo se usa en los
+  logs. Una fecha o un comentario no válidos rechazan el envío
+  (`INVALID_INVENTORY`).
 
 ### Qué hace
 
@@ -36,7 +47,13 @@ stock del artículo pasa a ser lo contado.
   con ese número y la PDA que lo envió (columna «Recuento PDA», filtro «Desde
   PDA»). Al aplicarlo, el movimiento de ajuste lleva esa referencia
   (`INV/00045 (PDA <nombre del token>)`) en *Inventario > Informes > Historial
-  de movimientos*. Si alguien cambia a mano la cantidad contada, la marca se
+  de movimientos*.
+- Inicio, envío y comentario se guardan en cada artículo contado (columnas
+  «Inicio/Envío/Comentario recuento PDA» del Inventario físico) y pasan al
+  movimiento de ajuste al aplicarlo (mismas columnas en el Historial de
+  movimientos; las fechas vienen ocultas, se activan en el selector de
+  columnas). Si un artículo se vuelve a contar, se quedan los datos del último
+  envío. Si alguien cambia a mano la cantidad contada, la marca se
   quita y el ajuste queda como uno normal de Odoo.
 - Cada envío deja en el log de Odoo las referencias y unidades recibidas.
 - Los artículos que no se envían **no se tocan**.

@@ -1,5 +1,6 @@
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0)
 import json
+from datetime import datetime
 from unittest.mock import patch
 
 from odoo.tests.common import TransactionCase, tagged
@@ -15,7 +16,9 @@ from ..controllers import pda_inventory_controller as mod
 
 PDA_PAYLOAD = {
     "uuid": "3f0c9c1e-7a41-4b8e-9d52-1c6e0a7b2f10",
-    "fecha_hora": "09/11/2026 10:35:12",
+    "fecha_hora_inicio": "09/11/2026 09:12:40",
+    "fecha_hora_envio": "09/11/2026 10:35:12",
+    "comentario": "Recuento de la sección de frutería, falta la cámara 2",
     "lineas": [
         {"id_articulo": "REF001", "unidades": 12},
         {"id_articulo": "REF002", "unidades": 3.5},
@@ -41,6 +44,7 @@ class TestPdaInventory(TransactionCase):
             {
                 "name": "Vendedora PDA",
                 "login": "vendedora_pda_inv",
+                "tz": "Europe/Madrid",
                 "group_ids": [(6, 0, [cls.env.ref("base.group_user").id])],
             }
         )
@@ -159,11 +163,58 @@ class TestPdaInventory(TransactionCase):
         self.assertEqual(set(moves.mapped("reference")), {origin})
         self.assertFalse((quant1 | quant2).filtered("pda_count_origin"))
 
+    def test_count_info_is_kept_and_moved_to_the_adjustment(self):
+        self._call(PDA_PAYLOAD)
+        quant = self._quant(self.ref1)
+        # Hora local de Madrid (CET, UTC+1) guardada en UTC.
+        self.assertEqual(quant.pda_count_start, datetime(2026, 11, 9, 8, 12, 40))
+        self.assertEqual(quant.pda_count_end, datetime(2026, 11, 9, 9, 35, 12))
+        self.assertEqual(quant.pda_count_comment, PDA_PAYLOAD["comentario"])
+        quant.action_apply_inventory()
+        move = self.env["stock.move"].search(
+            [("is_inventory", "=", True), ("product_id", "=", self.ref1.id)]
+        )
+        self.assertEqual(move.pda_count_start, datetime(2026, 11, 9, 8, 12, 40))
+        self.assertEqual(move.pda_count_end, datetime(2026, 11, 9, 9, 35, 12))
+        self.assertEqual(move.move_line_ids.pda_count_comment, PDA_PAYLOAD["comentario"])
+        self.assertFalse(quant.pda_count_comment or quant.pda_count_start)
+
+    def test_count_info_is_optional_and_accepts_old_format(self):
+        data, status = self._call({
+            "fecha_hora": "09/11/2026 10:35:12",
+            "lineas": PDA_PAYLOAD["lineas"],
+        })
+        self.assertEqual(status, 200, data)
+        quant = self._quant(self.ref1)
+        self.assertFalse(quant.pda_count_start)
+        self.assertEqual(quant.pda_count_end, datetime(2026, 11, 9, 9, 35, 12))
+        self.assertFalse(quant.pda_count_comment)
+        # Un envío nuevo sustituye los datos del anterior.
+        self._call(PDA_PAYLOAD)
+        self.assertEqual(quant.pda_count_comment, PDA_PAYLOAD["comentario"])
+        self._call({"lineas": PDA_PAYLOAD["lineas"], "comentario": "  "})
+        self.assertFalse(quant.pda_count_comment or quant.pda_count_end)
+
+    def test_rejects_invalid_count_info(self):
+        for extra in (
+            {"fecha_hora_inicio": "31/02/2026 10:00:00"},
+            {"fecha_hora_envio": "ayer"},
+            {"fecha_hora_envio": 20261109},
+            {"fecha_hora_inicio": "09/11/2026 11:00:00",
+             "fecha_hora_envio": "09/11/2026 10:00:00"},
+            {"comentario": 5},
+            {"comentario": "x" * 2001},
+        ):
+            data, status = self._call(dict({"lineas": PDA_PAYLOAD["lineas"]}, **extra))
+            self.assertEqual((status, data["code"]), (400, "INVALID_INVENTORY"), extra)
+        self.assertFalse(self._quant(self.ref1).inventory_quantity_set)
+
     def test_manual_edit_or_clear_removes_pda_mark(self):
         self._call(PDA_PAYLOAD)
         quant1, quant2 = self._quant(self.ref1), self._quant(self.ref2)
         quant1.inventory_quantity = 11
         self.assertFalse(quant1.pda_count_origin)
+        self.assertFalse(quant1.pda_count_comment)
         quant1.action_apply_inventory()
         move = self.env["stock.move"].search(
             [("is_inventory", "=", True), ("product_id", "=", self.ref1.id)]
@@ -171,6 +222,7 @@ class TestPdaInventory(TransactionCase):
         self.assertNotIn("PDA", move.reference)
         quant2.action_clear_inventory_quantity()
         self.assertFalse(quant2.pda_count_origin)
+        self.assertFalse(quant2.pda_count_end)
         self.assertFalse(quant2.inventory_quantity_set)
 
     def test_resend_and_repeated_lines(self):
