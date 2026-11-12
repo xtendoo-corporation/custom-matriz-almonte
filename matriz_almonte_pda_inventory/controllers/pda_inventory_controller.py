@@ -208,7 +208,7 @@ class MatrizAlmontePdaInventoryController(http.Controller):
 
     @staticmethod
     def _next_inventory_number():
-        """Número nuevo de inventario: ``"INV/00045"``."""
+        """Número nuevo de inventario: ``"INVENTORY/00045"``."""
         sequence = (
             request.env["ir.sequence"]
             .sudo()
@@ -220,7 +220,7 @@ class MatrizAlmontePdaInventoryController(http.Controller):
 
     @staticmethod
     def _number_id(number):
-        """``"INV/00045"`` → ``45``."""
+        """``"INVENTORY/00045"`` → ``45``."""
         match = re.search(r"(\d+)\D*$", number or "")
         return int(match.group(1)) if match else 0
 

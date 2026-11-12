@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <odoo>
     <data noupdate="1">
-        <!-- Número de cada recuento recibido de la PDA (INV/00045). -->
+        <!-- Número de cada recuento recibido de la PDA (INVENTORY/00045). -->
         <record id="seq_pda_inventory_count" model="ir.sequence">
             <field name="name">Recuento de inventario PDA</field>
             <field name="code">matriz.almonte.pda.inventory.count</field>
-            <field name="prefix">INV/</field>
+            <field name="prefix">INVENTORY/</field>
             <field name="padding">5</field>
             <field name="company_id" eval="False" />
         </record>

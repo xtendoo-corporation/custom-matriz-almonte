@@ -19,7 +19,7 @@ class MatrizAlmontePdaInventoryLog(models.Model):
         required=True,
         readonly=True,
         index=True,
-        help="Número del inventario (INV/00045) al que se sumó la línea.",
+        help="Número del inventario (INVENTORY/00045) al que se sumó la línea.",
     )
     quant_id = fields.Many2one(
         "stock.quant",

@@ -44,7 +44,7 @@ diferencia y pulsa «Aplicar», y entonces el stock pasa a ser lo contado.
 
 - **Número de inventario por ubicación.** Si en `<ALMACÉN>/Stock` no hay
   ninguna línea de la PDA pendiente de aplicar, el envío abre un inventario
-  nuevo (`INV/00045`). Si ya hay un inventario abierto, el envío se suma a él,
+  nuevo (`INVENTORY/00045`). Si ya hay un inventario abierto, el envío se suma a él,
   venga de la PDA que venga. El inventario sigue abierto mientras le quede
   alguna línea pendiente; una vez aplicadas todas, el siguiente envío abre otro
   número. Las líneas llevan el número en la columna «Inventario PDA» (filtro
@@ -91,7 +91,7 @@ diferencia y pulsa «Aplicar», y entonces el stock pasa a ser lo contado.
 Respuesta:
 
 ```json
-{"success": true, "order_id": 45, "order_name": "INV/00045",
+{"success": true, "order_id": 45, "order_name": "INVENTORY/00045",
  "message": "Inventario registrado",
  "code": "INVENTORY_COUNTED", "almacen": "Olga", "ubicacion": "OLGA/Stock", "articulos_contados": 2,
  "articulos_a_cero": 140, "duplicado": false,

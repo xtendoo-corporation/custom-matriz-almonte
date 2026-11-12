@@ -14,7 +14,7 @@ class StockQuant(models.Model):
         readonly=True,
         copy=False,
         index=True,
-        help="Número del inventario de la PDA (INV/00045) al que pertenece la "
+        help="Número del inventario de la PDA (INVENTORY/00045) al que pertenece la "
         "cantidad contada pendiente. Todas las líneas pendientes de una "
         "ubicación comparten número hasta que se aplican; al aplicar, el "
         "movimiento de ajuste lleva este número como referencia.",
@@ -115,7 +115,7 @@ class StockQuant(models.Model):
         recibida queda registrada en ``matriz.almonte.pda.inventory.log``.
 
         :param counts: ``{product: unidades_recibidas}``.
-        :param number: número del inventario (INV/00045).
+        :param number: número del inventario (INVENTORY/00045).
         :param info: inicio, envío y comentario de este envío.
         :param log_vals: valores comunes de las líneas del registro (PDA,
             uuid, referencias enviadas en ``refs`` por producto...).

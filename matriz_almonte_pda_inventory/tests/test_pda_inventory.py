@@ -129,7 +129,7 @@ class TestPdaInventory(TransactionCase):
         self.assertIs(data["success"], True)
         self.assertEqual(data["message"], "Inventario registrado")
         self.assertIsInstance(data["order_id"], int)
-        self.assertEqual(data["order_name"], "INV/%05d" % data["order_id"])
+        self.assertEqual(data["order_name"], "INVENTORY/%05d" % data["order_id"])
         self.assertEqual(data["code"], "INVENTORY_COUNTED")
         self.assertEqual(data["almacen"], self.shop.name)
         self.assertEqual(data["articulos_contados"], 2)
