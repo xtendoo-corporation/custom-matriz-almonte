@@ -107,12 +107,12 @@ class MatrizAlmontePdaInventoryController(http.Controller):
                 len(quantities),
                 self._summary(quantities),
             )
-            counts, warnings, skipped, refs = self._resolve_products(
+            counts, warnings, _skipped, refs = self._resolve_products(
                 quantities, company
             )
             if not counts:
-                # Sin ningún artículo válido, poner a cero el resto vaciaría
-                # la tienda entera por un envío erróneo.
+                # Sin ningún artículo válido no se abre ni se toca nada: un
+                # inventario vacío pondría a 0 la tienda entera al aplicarlo.
                 raise ValidationError(
                     "Ninguna referencia del recuento se puede inventariar en "
                     "Odoo: no se registra nada."
@@ -137,7 +137,7 @@ class MatrizAlmontePdaInventoryController(http.Controller):
                         duplicate.name,
                     )
                     return self._success(
-                        duplicate.name, warehouse, 0, 0, warnings, duplicate=True
+                        duplicate.name, warehouse, 0, warnings, duplicate=True
                     )
                 number = Quant._pda_current_inventory_number(location)
                 is_new = not number
@@ -156,9 +156,6 @@ class MatrizAlmontePdaInventoryController(http.Controller):
                         "refs": {product.id: ref for product, ref in refs.items()},
                     },
                 )
-                zeroed = Quant._pda_zero_uncounted(
-                    location, quants, skipped, user, number, info
-                )
         except (UserError, ValidationError) as exc:
             _logger.warning("PDA inventario %s rechazado: %s", reference, exc)
             return _error("INVALID_INVENTORY", str(exc.args[0] if exc.args else exc))
@@ -169,27 +166,23 @@ class MatrizAlmontePdaInventoryController(http.Controller):
             )
 
         _logger.info(
-            "PDA inventario %s %s (%s): %s %s artículos sumados y %s a cero en %s, "
-            "%s avisos",
+            "PDA inventario %s %s (%s): %s %s artículos sumados en %s, %s avisos",
             number,
             reference,
             token_rec.name,
             "inventario nuevo," if is_new else "inventario abierto,",
             len(quants),
-            len(zeroed.product_id),
             warehouse.name,
             len(warnings),
         )
-        return self._success(
-            number, warehouse, len(quants), len(zeroed.product_id), warnings
-        )
+        return self._success(number, warehouse, len(quants), warnings)
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _success(number, warehouse, counted, zeroed, warnings, duplicate=False):
+    def _success(number, warehouse, counted, warnings, duplicate=False):
         return _json_response(
             {
                 "success": True,
@@ -200,7 +193,6 @@ class MatrizAlmontePdaInventoryController(http.Controller):
                 "almacen": warehouse.name,
                 "ubicacion": warehouse.lot_stock_id.complete_name,
                 "articulos_contados": counted,
-                "articulos_a_cero": zeroed,
                 "duplicado": duplicate,
                 "avisos": warnings,
             }

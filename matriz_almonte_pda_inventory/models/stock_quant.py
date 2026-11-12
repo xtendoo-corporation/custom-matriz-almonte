@@ -17,7 +17,8 @@ class StockQuant(models.Model):
         help="Número del inventario de la PDA (INVENTORY/00045) al que pertenece la "
         "cantidad contada pendiente. Todas las líneas pendientes de una "
         "ubicación comparten número hasta que se aplican; al aplicar, el "
-        "movimiento de ajuste lleva este número como referencia.",
+        "movimiento de ajuste lleva este número como referencia. Al aplicar la "
+        "última línea, lo que no estaba en el inventario se pone a 0.",
     )
     pda_count_start = fields.Datetime(
         string="Inicio recuento PDA", readonly=True, copy=False
@@ -164,44 +165,6 @@ class StockQuant(models.Model):
         Log.create(logs)
         return quants
 
-    @api.model
-    def _pda_zero_uncounted(self, location, counted, keep_products, user, number, info=None):
-        """Pone a 0 (pendiente de aplicar) el stock que no está en el inventario.
-
-        Inventario completo: todo quant de ``location`` o sus sububicaciones
-        con stock que no esté ya pendiente de aplicar (es decir, que no forme
-        parte del inventario abierto) y no sea uno de ``counted`` queda con
-        cantidad contada 0 y el número del inventario. Si después llega en
-        otro envío, sus unidades se suman a ese 0.
-
-        No se tocan los artículos con lotes/números de serie (no se pueden
-        contar desde la PDA) ni ``keep_products`` (enviados por la PDA pero
-        que no se pudieron registrar).
-
-        :returns: los quants puestos a 0.
-        """
-        info = info or {}
-        quants = self.search(
-            [
-                ("location_id", "child_of", location.id),
-                ("id", "not in", counted.ids),
-                ("product_id", "not in", keep_products.ids),
-                ("product_id.tracking", "=", "none"),
-                ("inventory_quantity_set", "=", False),
-                ("quantity", "!=", 0),
-            ]
-        )
-        if quants:
-            vals = {
-                "inventory_quantity": 0,
-                "inventory_quantity_set": True,
-                "user_id": user.id,
-                "pda_count_origin": number,
-            }
-            vals.update({name: info.get(name) or False for name in PDA_COUNT_FIELDS})
-            quants.write(vals)
-        return quants
-
     # ------------------------------------------------------------------
     # Ciclo de vida del recuento
     # ------------------------------------------------------------------
@@ -216,6 +179,19 @@ class StockQuant(models.Model):
         if "inventory_quantity_set" in vals and not vals["inventory_quantity_set"]:
             vals = dict(vals, **self._pda_clear_vals())
         return super().write(vals)
+
+    def _apply_inventory(self, date=None):
+        # Al aplicar la última línea pendiente de un inventario de la PDA se
+        # abre la puesta a 0 de lo que no estaba en él (tarea programada).
+        applied = {}
+        if not self.env.context.get("pda_inventory_zeroing"):
+            for quant in self.filtered("pda_count_origin"):
+                applied.setdefault(quant.pda_count_origin, self.browse())
+                applied[quant.pda_count_origin] |= quant
+        res = super()._apply_inventory(date=date)
+        if applied:
+            self.env["matriz.almonte.pda.inventory.zeroing"]._pda_inventory_applied(applied)
+        return res
 
     def _get_inventory_move_values(self, qty, location_id, location_dest_id, package_id=False, package_dest_id=False):
         res = super()._get_inventory_move_values(

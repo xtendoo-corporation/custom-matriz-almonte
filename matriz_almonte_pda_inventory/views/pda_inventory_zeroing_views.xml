@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_pda_inventory_zeroing_list" model="ir.ui.view">
+        <field name="name">matriz.almonte.pda.inventory.zeroing.list</field>
+        <field name="model">matriz.almonte.pda.inventory.zeroing</field>
+        <field name="arch" type="xml">
+            <list create="0" edit="0" delete="0"
+                  decoration-danger="state == 'error'" decoration-muted="state == 'done'">
+                <field name="create_date" string="Abierta" />
+                <field name="name" />
+                <field name="warehouse_id" />
+                <field name="location_id" optional="hide" />
+                <field name="zeroed_count" />
+                <field name="date_done" />
+                <field name="state" widget="badge"
+                       decoration-info="state == 'pending'"
+                       decoration-success="state == 'done'"
+                       decoration-danger="state == 'error'" />
+                <field name="company_id" optional="hide" groups="base.group_multi_company" />
+            </list>
+        </field>
+    </record>
+
+    <record id="view_pda_inventory_zeroing_form" model="ir.ui.view">
+        <field name="name">matriz.almonte.pda.inventory.zeroing.form</field>
+        <field name="model">matriz.almonte.pda.inventory.zeroing</field>
+        <field name="arch" type="xml">
+            <form create="0" edit="0" delete="0">
+                <header>
+                    <button name="action_retry" type="object" string="Reintentar"
+                            class="btn-primary" invisible="state != 'error'"
+                            groups="stock.group_stock_manager" />
+                    <field name="state" widget="statusbar" />
+                </header>
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="name" />
+                            <field name="warehouse_id" />
+                            <field name="location_id" />
+                        </group>
+                        <group>
+                            <field name="create_date" string="Abierta" />
+                            <field name="date_done" />
+                            <field name="zeroed_count" />
+                        </group>
+                    </group>
+                    <field name="error" invisible="not error" class="text-danger" />
+                    <separator string="Artículos del inventario (no se ponen a 0)" />
+                    <field name="counted_product_ids" widget="many2many_tags" />
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="view_pda_inventory_zeroing_search" model="ir.ui.view">
+        <field name="name">matriz.almonte.pda.inventory.zeroing.search</field>
+        <field name="model">matriz.almonte.pda.inventory.zeroing</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="name" />
+                <field name="warehouse_id" />
+                <filter name="pending" string="Pendientes" domain="[('state', '=', 'pending')]" />
+                <filter name="error" string="Con error" domain="[('state', '=', 'error')]" />
+                <group>
+                    <filter name="group_warehouse" string="Almacén" context="{'group_by': 'warehouse_id'}" />
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_pda_inventory_zeroing" model="ir.actions.act_window">
+        <field name="name">Puestas a 0 tras inventario PDA</field>
+        <field name="res_model">matriz.almonte.pda.inventory.zeroing</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_pda_inventory_zeroing_search" />
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Todavía no se ha cerrado ningún inventario de la PDA.</p>
+            <p>Al aplicar la última línea de un inventario de la PDA, el stock de esa ubicación que no estaba en el inventario se pone a 0 automáticamente.</p>
+        </field>
+    </record>
+
+    <menuitem
+        id="menu_pda_inventory_zeroing"
+        name="Puestas a 0 tras inventario PDA"
+        parent="stock.menu_stock_adjustments"
+        action="action_pda_inventory_zeroing"
+        sequence="12"
+    />
+</odoo>

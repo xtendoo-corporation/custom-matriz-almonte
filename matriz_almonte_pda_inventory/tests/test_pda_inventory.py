@@ -123,6 +123,21 @@ class TestPdaInventory(TransactionCase):
         self.assertEqual(quant.inventory_diff_quantity, counted - on_hand)
         self.assertEqual(quant.user_id, self.seller)
 
+    def _zeroings(self):
+        return self.env["matriz.almonte.pda.inventory.zeroing"].search(
+            [("location_id", "=", self.stock.id)]
+        )
+
+    def _run_zeroing(self, limit=None):
+        Zeroing = self.env["matriz.almonte.pda.inventory.zeroing"]
+        for _i in range(20):
+            if not Zeroing.search_count([("state", "=", "pending")]):
+                break
+            Zeroing._cron_process(limit=limit)
+
+    def _apply_all(self):
+        self.env["stock.quant"]._pda_pending_quants(self.stock).action_apply_inventory()
+
     def test_first_send_opens_an_inventory(self):
         data, status = self._call(PDA_PAYLOAD)
         self.assertEqual(status, 200, data)
@@ -133,20 +148,18 @@ class TestPdaInventory(TransactionCase):
         self.assertEqual(data["code"], "INVENTORY_COUNTED")
         self.assertEqual(data["almacen"], self.shop.name)
         self.assertEqual(data["articulos_contados"], 2)
-        self.assertEqual(data["articulos_a_cero"], 1)
+        self.assertNotIn("articulos_a_cero", data)
         self.assertIs(data["duplicado"], False)
         self.assertEqual(data["avisos"], [])
         self._assert_pending(self.ref1, on_hand=10, counted=12)
         self._assert_pending(self.ref2, on_hand=0, counted=3.5)
-        # El stock no enviado queda contado a 0 en el mismo inventario.
-        self._assert_pending(self.other, on_hand=7, counted=0)
+        # Lo no enviado no se toca al recibir: se pone a 0 al cerrar.
+        self.assertFalse(self._quant(self.other).inventory_quantity_set)
         number = data["order_name"]
         self.assertEqual(
-            set((self._quant(self.ref1) | self._quant(self.ref2) | self._quant(self.other))
-                .mapped("pda_count_origin")),
+            set((self._quant(self.ref1) | self._quant(self.ref2)).mapped("pda_count_origin")),
             {number},
         )
-        # Una línea de registro por artículo recibido (no por los puestos a 0).
         logs = self._logs()
         self.assertEqual(
             {(log.product_id, log.quantity, log.counted_after, log.name) for log in logs},
@@ -156,10 +169,11 @@ class TestPdaInventory(TransactionCase):
         self.assertEqual(set(logs.mapped("pda_uuid")), {PDA_PAYLOAD["uuid"]})
         self.assertEqual(logs.mapped("id_articulo"), ["REF001", "REF002"])
         self.assertEqual(self._quant(self.ref1).pda_log_count, 1)
-        # No se crea ningún movimiento hasta aplicar.
+        # No se crea ningún movimiento ni puesta a 0 hasta aplicar.
         self.assertFalse(self.env["stock.move"].search(
             [("is_inventory", "=", True), ("product_id", "in", [self.ref1.id, self.ref2.id])]
         ))
+        self.assertFalse(self._zeroings())
 
     def test_next_sends_add_units_to_the_open_inventory(self):
         first, _s = self._call(self._send([("REF001", 5), ("REF002", 1)], uuid="a"))
@@ -169,10 +183,8 @@ class TestPdaInventory(TransactionCase):
                                token=self.token2)
         self.assertEqual(first["order_name"], second["order_name"])
         self.assertEqual(first["order_name"], third["order_name"])
-        self.assertEqual(second["articulos_a_cero"], 0)
         self._assert_pending(self.ref1, on_hand=10, counted=12)
         self._assert_pending(self.ref2, on_hand=0, counted=1)
-        # R-01 se puso a 0 en el primer envío y luego llegaron 4.
         self._assert_pending(self.other, on_hand=7, counted=4)
         logs = self._logs(self.ref1)
         self.assertEqual(logs.mapped("quantity"), [5, 5, 2])
@@ -188,11 +200,13 @@ class TestPdaInventory(TransactionCase):
         first, _s = self._call(self._send([("REF001", 1), ("REF002", 1)], uuid="a"))
         # Aplicar una parte no cierra el inventario.
         self._quant(self.ref1).action_apply_inventory()
+        self.assertFalse(self._zeroings())
         second, _s = self._call(self._send([("REF001", 2)], uuid="b"))
         self.assertEqual(second["order_name"], first["order_name"])
         self._assert_pending(self.ref1, on_hand=1, counted=2)
         # Sin líneas pendientes en la ubicación, el siguiente envío abre otro.
-        self.env["stock.quant"]._pda_pending_quants(self.stock).action_apply_inventory()
+        self._apply_all()
+        self.assertEqual(len(self._zeroings()), 1)
         third, _s = self._call(self._send([("REF001", 3)], uuid="c"))
         self.assertEqual(third["order_id"], first["order_id"] + 1)
         self._assert_pending(self.ref1, on_hand=2, counted=3)
@@ -256,12 +270,22 @@ class TestPdaInventory(TransactionCase):
         data, _s = self._call(PDA_PAYLOAD)
         number = data["order_name"]
         quants = self.env["stock.quant"]._pda_pending_quants(self.stock)
-        self.assertEqual(quants, self._quant(self.ref1) | self._quant(self.ref2) | self._quant(self.other))
+        self.assertEqual(quants, self._quant(self.ref1) | self._quant(self.ref2))
         # Aplicar desde el wizard «Aplicar todo» (que propone su propio
         # nombre) mantiene el número del inventario.
         quants.with_context(inventory_name="Cantidad de producto actualizada").action_apply_inventory()
         self.assertEqual(self._quant(self.ref1).quantity, 12)
         self.assertEqual(self._quant(self.ref2).quantity, 3.5)
+        self.assertFalse(quants.filtered("inventory_quantity_set"))
+        self.assertFalse(quants.filtered("pda_count_origin"))
+        # Inventario cerrado: queda abierta su puesta a 0, todavía sin hacer.
+        zeroing = self._zeroings()
+        self.assertEqual((zeroing.name, zeroing.state), (number, "pending"))
+        self.assertEqual(zeroing.counted_product_ids, self.ref1 | self.ref2)
+        self.assertEqual(self._quant(self.other).quantity, 7)
+        self._run_zeroing()
+        self.assertEqual((zeroing.state, zeroing.zeroed_count), ("done", 1))
+        self.assertTrue(zeroing.date_done)
         self.assertEqual(self._quant(self.other).quantity, 0)
         moves = self.env["stock.move"].search(
             [("is_inventory", "=", True), ("location_dest_id", "=", self.stock.id)]
@@ -270,10 +294,15 @@ class TestPdaInventory(TransactionCase):
         )
         self.assertEqual(len(moves), 3)
         self.assertEqual(set(moves.mapped("reference")), {number})
-        self.assertFalse(quants.filtered("inventory_quantity_set"))
-        self.assertFalse(quants.filtered("pda_count_origin"))
+        zero_move = moves.filtered(lambda m: m.product_id == self.other)
+        self.assertEqual(zero_move.product_uom_qty, 7)
+        self.assertEqual(zero_move.pda_count_comment, "No estaba en el inventario: puesto a 0.")
+        self.assertFalse(self._quant(self.other).pda_count_origin)
         # El registro de envíos se conserva tras aplicar.
         self.assertEqual(len(self._logs()), 2)
+        # Volver a aplicar algo no repite la puesta a 0.
+        self._call(self._send([("REF001", 1)], uuid="otro"))
+        self.assertEqual(len(self._zeroings()), 1)
 
     def test_clear_removes_pda_mark(self):
         self._call(PDA_PAYLOAD)
@@ -282,13 +311,14 @@ class TestPdaInventory(TransactionCase):
         self.assertFalse(quant.inventory_quantity_set)
         self.assertFalse(quant.pda_count_origin or quant.pda_count_end or quant.pda_count_comment)
 
-    def test_uncounted_stock_goes_to_zero(self):
+    def test_uncounted_stock_goes_to_zero_when_inventory_is_applied(self):
         Quant = self.env["stock.quant"]
         shelf = self.env["stock.location"].create(
             {"name": "Estante", "location_id": self.stock.id}
         )
         Quant._update_available_quantity(self.ref1, shelf, 4)
         Quant._update_available_quantity(self.zero, shelf, -2)
+        Quant._update_available_quantity(self.ref2, shelf, 1)
         lot = self.env["stock.lot"].create(
             {"name": "L1", "product_id": self.lot_item.id}
         )
@@ -300,29 +330,58 @@ class TestPdaInventory(TransactionCase):
 
         data, status = self._call(PDA_PAYLOAD)
         self.assertEqual(status, 200, data)
-        pending = Quant._pda_pending_quants(self.stock)
-        self.assertEqual(
-            {(q.product_id, q.location_id, q.inventory_quantity) for q in pending},
-            {
-                (self.ref1, self.stock, 12),
-                (self.ref2, self.stock, 3.5),
-                (self.ref1, shelf, 0),
-                (self.other, self.stock, 0),
-                (self.zero, shelf, 0),
-            },
-        )
-        self.assertEqual(data["articulos_a_cero"], 3)
-        # Los lotes no se cuentan desde la PDA ni se ponen a cero, y otros
-        # almacenes no se tocan.
-        lot_quant = Quant.search([("product_id", "=", self.lot_item.id)])
-        self.assertFalse(lot_quant.inventory_quantity_set)
-        self.assertFalse(
-            Quant.search([("location_id", "=", other_shop.lot_stock_id.id)]).inventory_quantity_set
-        )
-        pending.action_apply_inventory()
-        self.assertEqual(self.ref1.with_context(location=self.stock.id).qty_available, 12)
-        self.assertEqual(self.other.with_context(location=self.stock.id).qty_available, 0)
-        self.assertEqual(self.zero.with_context(location=self.stock.id).qty_available, 0)
+        # Un recuento a mano en curso, ajeno al inventario de la PDA.
+        manual = Quant.search([("product_id", "=", self.ref2.id), ("location_id", "=", shelf.id)])
+        manual.inventory_quantity = 1
+        self._quant(self.ref1).action_apply_inventory()
+        self._quant(self.ref2).action_apply_inventory()
+        zeroing = self._zeroings()
+        self.assertEqual(zeroing.state, "pending")
+        # Por tandas de 1: cada ejecución pone a 0 una línea.
+        Zeroing = self.env["matriz.almonte.pda.inventory.zeroing"]
+        Zeroing._cron_process(limit=1)
+        self.assertEqual((zeroing.state, zeroing.zeroed_count), ("pending", 1))
+        self._run_zeroing(limit=1)
+        self.assertEqual((zeroing.state, zeroing.zeroed_count), ("done", 3))
+
+        def qty(product, location):
+            return product.with_context(location=location.id).qty_available
+
+        # Contados: lo contado; su stock en el estante también pasa a 0.
+        self.assertEqual(qty(self.ref1, self.stock), 12)
+        self.assertEqual(Quant.search([("product_id", "=", self.ref1.id), ("location_id", "=", shelf.id)]).quantity, 0)
+        self.assertEqual(qty(self.ref2, self.stock), 4.5)
+        # No contados: a 0, también el negativo.
+        self.assertEqual(qty(self.other, self.stock), 0)
+        self.assertEqual(qty(self.zero, self.stock), 0)
+        # Los lotes, el recuento a mano pendiente y otros almacenes no se tocan.
+        self.assertEqual(Quant.search([("product_id", "=", self.lot_item.id)]).quantity, 5)
+        self.assertTrue(manual.inventory_quantity_set)
+        self.assertEqual(manual.quantity, 1)
+        self.assertEqual(qty(self.other, other_shop.lot_stock_id), 9)
+
+    def test_zeroing_error_can_be_retried(self):
+        self._call(PDA_PAYLOAD)
+        self._apply_all()
+        zeroing = self._zeroings()
+        model = type(self.env["stock.quant"])
+        original = model._apply_inventory
+
+        def boom(quants, date=None):
+            if quants.env.context.get("pda_inventory_zeroing"):
+                raise RuntimeError("boom")
+            return original(quants, date=date)
+
+        with patch.object(model, "_apply_inventory", boom):
+            self._run_zeroing()
+        self.assertEqual(zeroing.state, "error")
+        self.assertIn("boom", zeroing.error)
+        self.assertEqual(self._quant(self.other).quantity, 7)
+        self.assertFalse(self._quant(self.other).inventory_quantity_set)
+        zeroing.action_retry()
+        self._run_zeroing()
+        self.assertEqual(zeroing.state, "done")
+        self.assertEqual(self._quant(self.other).quantity, 0)
 
     def test_nothing_countable_is_rejected(self):
         data, status = self._call({"lineas": [{"id_articulo": "NOEXISTE", "unidades": 1}]})
@@ -424,7 +483,6 @@ class TestPdaInventory(TransactionCase):
             },
         )
         self._assert_pending(self.ref1, on_hand=10, counted=1)
-        # R-01 se envió (aunque sea ambiguo): no se pone a cero.
         self.assertFalse(self._quant(self.other).inventory_quantity_set)
         self.assertEqual(self._logs().product_id, self.ref1)
 

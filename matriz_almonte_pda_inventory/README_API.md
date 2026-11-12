@@ -66,15 +66,25 @@ diferencia y pulsa «Aplicar», y entonces el stock pasa a ser lo contado.
   mismas líneas (un reintento), no se suma otra vez: se responde con el número
   del inventario y `"duplicado": true`. Un `uuid` repetido con otras líneas se
   trata como un envío nuevo. Sin `uuid` no se puede reconocer el reintento.
-- **Inventario completo.** El stock del almacén (`<ALMACÉN>/Stock` y sus
-  sububicaciones) que no forma parte del inventario abierto y no viene en el
-  envío queda con cantidad contada **0** en ese inventario. En la práctica se
-  pone a 0 con el primer envío, y los envíos siguientes suman a ese 0. Al
-  aplicar, en la tienda solo queda lo inventariado. Excepciones: los artículos
-  con lotes/números de serie (no se cuentan desde la PDA) y los que la PDA
-  envió pero no se pudieron registrar (van en `avisos`). Si ninguna referencia
-  del envío se puede inventariar, se rechaza (`INVALID_INVENTORY`) para no
-  vaciar la tienda por error.
+- **Al recibir no se pone nada a 0**: el inventario solo lleva lo contado.
+  Si ninguna referencia del envío se puede inventariar, se rechaza
+  (`INVALID_INVENTORY`): un inventario vacío pondría a 0 la tienda entera.
+- **Inventario completo al aplicarlo.** Cuando se aplica la última línea
+  pendiente de un inventario (en una vez o en varias), se abre su **puesta a
+  0** (*Inventario > Operaciones > Ajustes > Puestas a 0 tras inventario
+  PDA*) y la tarea programada «PDA: poner a 0 lo no inventariado» la ejecuta
+  enseguida, por tandas de 300 líneas para no bloquear Odoo: todo el stock de
+  la ubicación del inventario (`<ALMACÉN>/Stock` y sus sububicaciones) que no
+  sea la línea contada de un artículo del inventario se pone a 0 y se aplica
+  directamente. Eso incluye el stock en sububicaciones o paquetes de los
+  artículos contados, para que el total de la tienda sea lo contado. Los
+  movimientos llevan el número del inventario como referencia y el comentario
+  «No estaba en el inventario: puesto a 0.». No se tocan: artículos con
+  lotes/números de serie, líneas con un recuento pendiente (otro inventario o
+  un recuento a mano en curso) ni otros almacenes. Si algo falla, la puesta a
+  0 queda «Error» con el motivo y un responsable de inventario puede
+  «Reintentar». Si la última línea pendiente se borra en lugar de aplicarse,
+  no hay puesta a 0.
 - **Inicio, envío y comentario** se guardan en cada línea del registro. En la
   línea del Inventario físico quedan el inicio más antiguo, el envío más
   reciente y los comentarios de todos sus envíos, y pasan al movimiento de
@@ -94,7 +104,7 @@ Respuesta:
 {"success": true, "order_id": 45, "order_name": "INVENTORY/00045",
  "message": "Inventario registrado",
  "code": "INVENTORY_COUNTED", "almacen": "Olga", "ubicacion": "OLGA/Stock", "articulos_contados": 2,
- "articulos_a_cero": 140, "duplicado": false,
+ "duplicado": false,
  "avisos": [{"id_articulo": "REF009", "nombre": "", "mensaje": "Artículo inexistente en Odoo."}]}
 ```
 

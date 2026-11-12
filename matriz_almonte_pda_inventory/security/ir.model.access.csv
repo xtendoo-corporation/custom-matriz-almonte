@@ -1,3 +1,5 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
 access_pda_inventory_log_user,matriz.almonte.pda.inventory.log user,model_matriz_almonte_pda_inventory_log,stock.group_stock_user,1,0,0,0
 access_pda_inventory_log_manager,matriz.almonte.pda.inventory.log manager,model_matriz_almonte_pda_inventory_log,stock.group_stock_manager,1,0,0,1
+access_pda_inventory_zeroing_user,matriz.almonte.pda.inventory.zeroing user,model_matriz_almonte_pda_inventory_zeroing,stock.group_stock_user,1,0,0,0
+access_pda_inventory_zeroing_manager,matriz.almonte.pda.inventory.zeroing manager,model_matriz_almonte_pda_inventory_zeroing,stock.group_stock_manager,1,1,0,0
