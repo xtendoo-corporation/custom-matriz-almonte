@@ -48,9 +48,18 @@ class TestPdaInventory(TransactionCase):
                 "group_ids": [(6, 0, [cls.env.ref("base.group_user").id])],
             }
         )
-        cls.token = cls.env["matriz.almonte.api.token"].create(
+        Token = cls.env["matriz.almonte.api.token"]
+        cls.token = Token.create(
             {
                 "name": "PDA Inventario",
+                "tienda_id": cls.pos.id,
+                "sale_user_id": cls.seller.id,
+            }
+        )
+        # Segunda PDA de la misma tienda.
+        cls.token2 = Token.create(
+            {
+                "name": "PDA Almacén",
                 "tienda_id": cls.pos.id,
                 "sale_user_id": cls.seller.id,
             }
@@ -73,9 +82,9 @@ class TestPdaInventory(TransactionCase):
         Quant._update_available_quantity(cls.ref1, cls.stock, 10)
         Quant._update_available_quantity(cls.other, cls.stock, 7)
 
-    def _call(self, payload, headers=None):
+    def _call(self, payload, headers=None, token=None):
         if headers is None:
-            headers = {"Authorization": f"Bearer {self.token.token}"}
+            headers = {"Authorization": f"Bearer {(token or self.token).token}"}
         fake = _FakeRequest(
             self.env,
             headers=headers,
@@ -90,6 +99,21 @@ class TestPdaInventory(TransactionCase):
             [("product_id", "=", product.id), ("location_id", "=", self.stock.id)]
         )
 
+    @staticmethod
+    def _send(lineas, uuid=None, **extra):
+        payload = dict(extra, lineas=[
+            {"id_articulo": ref, "unidades": qty} for ref, qty in lineas
+        ])
+        if uuid:
+            payload["uuid"] = uuid
+        return payload
+
+    def _logs(self, product=None):
+        domain = [("location_id", "=", self.stock.id)]
+        if product:
+            domain.append(("product_id", "=", product.id))
+        return self.env["matriz.almonte.pda.inventory.log"].search(domain, order="id")
+
     def _assert_pending(self, product, on_hand, counted):
         quant = self._quant(product)
         self.assertEqual(len(quant), 1)
@@ -99,7 +123,7 @@ class TestPdaInventory(TransactionCase):
         self.assertEqual(quant.inventory_diff_quantity, counted - on_hand)
         self.assertEqual(quant.user_id, self.seller)
 
-    def test_pda_payload_leaves_counts_pending(self):
+    def test_first_send_opens_an_inventory(self):
         data, status = self._call(PDA_PAYLOAD)
         self.assertEqual(status, 200, data)
         self.assertIs(data["success"], True)
@@ -109,29 +133,154 @@ class TestPdaInventory(TransactionCase):
         self.assertEqual(data["code"], "INVENTORY_COUNTED")
         self.assertEqual(data["almacen"], self.shop.name)
         self.assertEqual(data["articulos_contados"], 2)
+        self.assertEqual(data["articulos_a_cero"], 1)
+        self.assertIs(data["duplicado"], False)
         self.assertEqual(data["avisos"], [])
         self._assert_pending(self.ref1, on_hand=10, counted=12)
         self._assert_pending(self.ref2, on_hand=0, counted=3.5)
-        self.assertEqual(data["articulos_a_cero"], 1)
-        # El artículo no enviado queda contado a 0, pendiente de aplicar.
+        # El stock no enviado queda contado a 0 en el mismo inventario.
         self._assert_pending(self.other, on_hand=7, counted=0)
+        number = data["order_name"]
         self.assertEqual(
-            self._quant(self.other).pda_count_origin,
-            "%s (PDA PDA Inventario)" % data["order_name"],
+            set((self._quant(self.ref1) | self._quant(self.ref2) | self._quant(self.other))
+                .mapped("pda_count_origin")),
+            {number},
         )
+        # Una línea de registro por artículo recibido (no por los puestos a 0).
+        logs = self._logs()
+        self.assertEqual(
+            {(log.product_id, log.quantity, log.counted_after, log.name) for log in logs},
+            {(self.ref1, 12, 12, number), (self.ref2, 3.5, 3.5, number)},
+        )
+        self.assertEqual(logs.token_id, self.token)
+        self.assertEqual(set(logs.mapped("pda_uuid")), {PDA_PAYLOAD["uuid"]})
+        self.assertEqual(logs.mapped("id_articulo"), ["REF001", "REF002"])
+        self.assertEqual(self._quant(self.ref1).pda_log_count, 1)
         # No se crea ningún movimiento hasta aplicar.
         self.assertFalse(self.env["stock.move"].search(
             [("is_inventory", "=", True), ("product_id", "in", [self.ref1.id, self.ref2.id])]
         ))
 
+    def test_next_sends_add_units_to_the_open_inventory(self):
+        first, _s = self._call(self._send([("REF001", 5), ("REF002", 1)], uuid="a"))
+        second, _s = self._call(self._send([("REF001", 5)], uuid="b"))
+        # Otra PDA de la misma tienda suma al mismo inventario.
+        third, _s = self._call(self._send([("REF001", 2), ("R-01", 4)], uuid="c"),
+                               token=self.token2)
+        self.assertEqual(first["order_name"], second["order_name"])
+        self.assertEqual(first["order_name"], third["order_name"])
+        self.assertEqual(second["articulos_a_cero"], 0)
+        self._assert_pending(self.ref1, on_hand=10, counted=12)
+        self._assert_pending(self.ref2, on_hand=0, counted=1)
+        # R-01 se puso a 0 en el primer envío y luego llegaron 4.
+        self._assert_pending(self.other, on_hand=7, counted=4)
+        logs = self._logs(self.ref1)
+        self.assertEqual(logs.mapped("quantity"), [5, 5, 2])
+        self.assertEqual(logs.mapped("counted_after"), [5, 10, 12])
+        self.assertEqual(logs.mapped("token_id"), self.token | self.token2)
+        self.assertEqual(self._quant(self.ref1).pda_log_count, 3)
+        action = self._quant(self.ref1).action_view_pda_logs()
+        self.assertEqual(self.env[action["res_model"]].search(action["domain"]), logs)
+        self._quant(self.ref1).action_apply_inventory()
+        self.assertEqual(self._quant(self.ref1).quantity, 12)
+
+    def test_new_number_once_everything_is_applied(self):
+        first, _s = self._call(self._send([("REF001", 1), ("REF002", 1)], uuid="a"))
+        # Aplicar una parte no cierra el inventario.
+        self._quant(self.ref1).action_apply_inventory()
+        second, _s = self._call(self._send([("REF001", 2)], uuid="b"))
+        self.assertEqual(second["order_name"], first["order_name"])
+        self._assert_pending(self.ref1, on_hand=1, counted=2)
+        # Sin líneas pendientes en la ubicación, el siguiente envío abre otro.
+        self.env["stock.quant"]._pda_pending_quants(self.stock).action_apply_inventory()
+        third, _s = self._call(self._send([("REF001", 3)], uuid="c"))
+        self.assertEqual(third["order_id"], first["order_id"] + 1)
+        self._assert_pending(self.ref1, on_hand=2, counted=3)
+        self.assertEqual(self._quant(self.ref1).pda_log_count, 1)
+
+    def test_each_location_has_its_own_inventory(self):
+        other_shop = self.env["stock.warehouse"].create({"name": "Otra tienda", "code": "OTR"})
+        other_pos = self.env["pos.config"].create(
+            {"name": "TPV Otra", "picking_type_id": other_shop.pos_type_id.id}
+        )
+        other_token = self.env["matriz.almonte.api.token"].create(
+            {"name": "PDA Otra", "tienda_id": other_pos.id, "sale_user_id": self.seller.id}
+        )
+        first, _s = self._call(self._send([("REF001", 1)], uuid="a"))
+        second, _s = self._call(self._send([("REF001", 1)], uuid="a"), token=other_token)
+        self.assertNotEqual(first["order_name"], second["order_name"])
+        self.assertIs(second["duplicado"], False)
+        self.assertEqual(second["ubicacion"], other_shop.lot_stock_id.complete_name)
+
+    def test_repeated_send_is_not_added_twice(self):
+        first, _s = self._call(PDA_PAYLOAD)
+        again, status = self._call(PDA_PAYLOAD)
+        self.assertEqual(status, 200, again)
+        self.assertIs(again["duplicado"], True)
+        self.assertEqual(again["order_name"], first["order_name"])
+        self.assertEqual(again["articulos_contados"], 0)
+        self._assert_pending(self.ref1, on_hand=10, counted=12)
+        self.assertEqual(len(self._logs()), 2)
+        # Mismo uuid con otras líneas: es otro envío y se suma.
+        changed = dict(PDA_PAYLOAD, lineas=[{"id_articulo": "REF001", "unidades": 1}])
+        data, _s = self._call(changed)
+        self.assertIs(data["duplicado"], False)
+        self._assert_pending(self.ref1, on_hand=10, counted=13)
+        # Sin uuid no se puede reconocer el reenvío: se suma.
+        self._call(self._send([("REF001", 1)]))
+        self._call(self._send([("REF001", 1)]))
+        self._assert_pending(self.ref1, on_hand=10, counted=15)
+
+    def test_repeated_lines_in_one_send_are_summed(self):
+        self._call({"lineas": [
+            {"id_articulo": "REF001", "unidades": 2},
+            {"id_articulo": "REF001", "unidades": "4"},
+        ]})
+        self._assert_pending(self.ref1, on_hand=10, counted=6)
+        self.assertEqual(self._logs(self.ref1).mapped("quantity"), [6])
+
+    def test_adds_to_a_manual_count_already_pending(self):
+        quant = self._quant(self.ref1)
+        quant.inventory_quantity = 3
+        self.assertFalse(quant.pda_count_origin)
+        data, _s = self._call(self._send([("REF001", 2)], uuid="a"))
+        self._assert_pending(self.ref1, on_hand=10, counted=5)
+        self.assertEqual(quant.pda_count_origin, data["order_name"])
+        # Corregir a mano mantiene la línea en el inventario de la PDA.
+        quant.inventory_quantity = 4
+        self.assertEqual(quant.pda_count_origin, data["order_name"])
+        self._call(self._send([("REF001", 1)], uuid="b"))
+        self._assert_pending(self.ref1, on_hand=10, counted=5)
+
     def test_applying_from_odoo_sets_real_stock(self):
-        self._call(PDA_PAYLOAD)
-        quants = self._quant(self.ref1) | self._quant(self.ref2) | self._quant(self.other)
-        quants.action_apply_inventory()
+        data, _s = self._call(PDA_PAYLOAD)
+        number = data["order_name"]
+        quants = self.env["stock.quant"]._pda_pending_quants(self.stock)
+        self.assertEqual(quants, self._quant(self.ref1) | self._quant(self.ref2) | self._quant(self.other))
+        # Aplicar desde el wizard «Aplicar todo» (que propone su propio
+        # nombre) mantiene el número del inventario.
+        quants.with_context(inventory_name="Cantidad de producto actualizada").action_apply_inventory()
         self.assertEqual(self._quant(self.ref1).quantity, 12)
         self.assertEqual(self._quant(self.ref2).quantity, 3.5)
         self.assertEqual(self._quant(self.other).quantity, 0)
+        moves = self.env["stock.move"].search(
+            [("is_inventory", "=", True), ("location_dest_id", "=", self.stock.id)]
+        ) | self.env["stock.move"].search(
+            [("is_inventory", "=", True), ("location_id", "=", self.stock.id)]
+        )
+        self.assertEqual(len(moves), 3)
+        self.assertEqual(set(moves.mapped("reference")), {number})
         self.assertFalse(quants.filtered("inventory_quantity_set"))
+        self.assertFalse(quants.filtered("pda_count_origin"))
+        # El registro de envíos se conserva tras aplicar.
+        self.assertEqual(len(self._logs()), 2)
+
+    def test_clear_removes_pda_mark(self):
+        self._call(PDA_PAYLOAD)
+        quant = self._quant(self.ref2)
+        quant.action_clear_inventory_quantity()
+        self.assertFalse(quant.inventory_quantity_set)
+        self.assertFalse(quant.pda_count_origin or quant.pda_count_end or quant.pda_count_comment)
 
     def test_uncounted_stock_goes_to_zero(self):
         Quant = self.env["stock.quant"]
@@ -144,8 +293,6 @@ class TestPdaInventory(TransactionCase):
             {"name": "L1", "product_id": self.lot_item.id}
         )
         Quant._update_available_quantity(self.lot_item, self.stock, 5, lot_id=lot)
-        # Recuento pendiente de otro envío para un artículo que ahora no viene.
-        self._call({"lineas": [{"id_articulo": "010001", "unidades": 3}]})
         other_shop = self.env["stock.warehouse"].create(
             {"name": "Otra tienda", "code": "OTR"}
         )
@@ -153,9 +300,7 @@ class TestPdaInventory(TransactionCase):
 
         data, status = self._call(PDA_PAYLOAD)
         self.assertEqual(status, 200, data)
-        pending = Quant.search(
-            [("location_id", "child_of", self.stock.id), ("inventory_quantity_set", "=", True)]
-        )
+        pending = Quant._pda_pending_quants(self.stock)
         self.assertEqual(
             {(q.product_id, q.location_id, q.inventory_quantity) for q in pending},
             {
@@ -163,7 +308,6 @@ class TestPdaInventory(TransactionCase):
                 (self.ref2, self.stock, 3.5),
                 (self.ref1, shelf, 0),
                 (self.other, self.stock, 0),
-                (self.zero, self.stock, 0),
                 (self.zero, shelf, 0),
             },
         )
@@ -184,40 +328,7 @@ class TestPdaInventory(TransactionCase):
         data, status = self._call({"lineas": [{"id_articulo": "NOEXISTE", "unidades": 1}]})
         self.assertEqual((status, data["code"]), (400, "INVALID_INVENTORY"))
         self.assertFalse(self._quant(self.other).inventory_quantity_set)
-
-    def test_each_count_gets_its_own_number(self):
-        first, _status = self._call(PDA_PAYLOAD)
-        second, _status = self._call(PDA_PAYLOAD)
-        self.assertEqual(second["order_id"], first["order_id"] + 1)
-        self.assertNotEqual(second["order_name"], first["order_name"])
-        # El recuento pendiente lleva el número del último envío.
-        self.assertEqual(
-            self._quant(self.ref1).pda_count_origin,
-            "%s (PDA PDA Inventario)" % second["order_name"],
-        )
-
-    def test_pda_adjustments_are_distinguishable(self):
-        data, _status = self._call(PDA_PAYLOAD)
-        origin = "%s (PDA PDA Inventario)" % data["order_name"]
-        quant1, quant2 = self._quant(self.ref1), self._quant(self.ref2)
-        self.assertEqual(quant1.pda_count_origin, origin)
-        self.assertEqual(
-            self.env["stock.quant"].search(
-                [("pda_count_origin", "!=", False), ("location_id", "=", self.stock.id)]
-            ),
-            quant1 | quant2 | self._quant(self.other),
-        )
-        # Aplicar desde el wizard «Aplicar todo» (que propone su propio
-        # nombre) mantiene la referencia de la PDA.
-        (quant1 | quant2).with_context(
-            inventory_name="Cantidad de producto actualizada"
-        )._apply_inventory()
-        moves = self.env["stock.move"].search(
-            [("is_inventory", "=", True), ("product_id", "in", [self.ref1.id, self.ref2.id])]
-        )
-        self.assertEqual(len(moves), 2)
-        self.assertEqual(set(moves.mapped("reference")), {origin})
-        self.assertFalse((quant1 | quant2).filtered("pda_count_origin"))
+        self.assertFalse(self._logs())
 
     def test_count_info_is_kept_and_moved_to_the_adjustment(self):
         self._call(PDA_PAYLOAD)
@@ -226,6 +337,9 @@ class TestPdaInventory(TransactionCase):
         self.assertEqual(quant.pda_count_start, datetime(2026, 11, 9, 8, 12, 40))
         self.assertEqual(quant.pda_count_end, datetime(2026, 11, 9, 9, 35, 12))
         self.assertEqual(quant.pda_count_comment, PDA_PAYLOAD["comentario"])
+        log = self._logs(self.ref1)
+        self.assertEqual(log.pda_count_start, datetime(2026, 11, 9, 8, 12, 40))
+        self.assertEqual(log.pda_count_comment, PDA_PAYLOAD["comentario"])
         quant.action_apply_inventory()
         move = self.env["stock.move"].search(
             [("is_inventory", "=", True), ("product_id", "=", self.ref1.id)]
@@ -234,6 +348,23 @@ class TestPdaInventory(TransactionCase):
         self.assertEqual(move.pda_count_end, datetime(2026, 11, 9, 9, 35, 12))
         self.assertEqual(move.move_line_ids.pda_count_comment, PDA_PAYLOAD["comentario"])
         self.assertFalse(quant.pda_count_comment or quant.pda_count_start)
+
+    def test_count_info_of_several_sends_is_merged(self):
+        self._call(self._send(
+            [("REF001", 1)], uuid="a", fecha_hora_inicio="09/11/2026 09:00:00",
+            fecha_hora_envio="09/11/2026 09:30:00", comentario="Frutería",
+        ))
+        self._call(self._send(
+            [("REF001", 1)], uuid="b", fecha_hora_inicio="09/11/2026 09:10:00",
+            fecha_hora_envio="09/11/2026 10:00:00", comentario="Cámara 2",
+        ))
+        self._call(self._send([("REF001", 1)], uuid="c", comentario="Frutería"))
+        quant = self._quant(self.ref1)
+        self.assertEqual(quant.pda_count_start, datetime(2026, 11, 9, 8, 0, 0))
+        self.assertEqual(quant.pda_count_end, datetime(2026, 11, 9, 9, 0, 0))
+        self.assertEqual(quant.pda_count_comment, "Frutería\nCámara 2")
+        self.assertEqual(self._logs(self.ref1).mapped("pda_count_comment"),
+                         ["Frutería", "Cámara 2", "Frutería"])
 
     def test_count_info_is_optional_and_accepts_old_format(self):
         data, status = self._call({
@@ -245,11 +376,6 @@ class TestPdaInventory(TransactionCase):
         self.assertFalse(quant.pda_count_start)
         self.assertEqual(quant.pda_count_end, datetime(2026, 11, 9, 9, 35, 12))
         self.assertFalse(quant.pda_count_comment)
-        # Un envío nuevo sustituye los datos del anterior.
-        self._call(PDA_PAYLOAD)
-        self.assertEqual(quant.pda_count_comment, PDA_PAYLOAD["comentario"])
-        self._call({"lineas": PDA_PAYLOAD["lineas"], "comentario": "  "})
-        self.assertFalse(quant.pda_count_comment or quant.pda_count_end)
 
     def test_rejects_invalid_count_info(self):
         for extra in (
@@ -264,34 +390,7 @@ class TestPdaInventory(TransactionCase):
             data, status = self._call(dict({"lineas": PDA_PAYLOAD["lineas"]}, **extra))
             self.assertEqual((status, data["code"]), (400, "INVALID_INVENTORY"), extra)
         self.assertFalse(self._quant(self.ref1).inventory_quantity_set)
-
-    def test_manual_edit_or_clear_removes_pda_mark(self):
-        self._call(PDA_PAYLOAD)
-        quant1, quant2 = self._quant(self.ref1), self._quant(self.ref2)
-        quant1.inventory_quantity = 11
-        self.assertFalse(quant1.pda_count_origin)
-        self.assertFalse(quant1.pda_count_comment)
-        quant1.action_apply_inventory()
-        move = self.env["stock.move"].search(
-            [("is_inventory", "=", True), ("product_id", "=", self.ref1.id)]
-        )
-        self.assertNotIn("PDA", move.reference)
-        quant2.action_clear_inventory_quantity()
-        self.assertFalse(quant2.pda_count_origin)
-        self.assertFalse(quant2.pda_count_end)
-        self.assertFalse(quant2.inventory_quantity_set)
-
-    def test_resend_and_repeated_lines(self):
-        self._call(PDA_PAYLOAD)
-        data, status = self._call(PDA_PAYLOAD)
-        self.assertEqual(status, 200, data)
-        self._assert_pending(self.ref1, on_hand=10, counted=12)
-        data, status = self._call({"lineas": [
-            {"id_articulo": "REF001", "unidades": 2},
-            {"id_articulo": "REF001", "unidades": "4"},
-        ]})
-        self.assertEqual(status, 200, data)
-        self._assert_pending(self.ref1, on_hand=10, counted=6)
+        self.assertFalse(self._logs())
 
     def test_ref_keeps_leading_zeros(self):
         data, status = self._call({"lineas": [{"id_articulo": "010001", "unidades": 1}]})
@@ -327,6 +426,7 @@ class TestPdaInventory(TransactionCase):
         self._assert_pending(self.ref1, on_hand=10, counted=1)
         # R-01 se envió (aunque sea ambiguo): no se pone a cero.
         self.assertFalse(self._quant(self.other).inventory_quantity_set)
+        self.assertEqual(self._logs().product_id, self.ref1)
 
     def test_rejects_invalid_lines(self):
         for lineas in (
@@ -368,7 +468,18 @@ class TestPdaInventory(TransactionCase):
     def test_unexpected_error_returns_server_error(self):
         model = type(self.env["stock.quant"])
         with patch.object(
-            model, "_pda_set_counted_quantities", side_effect=RuntimeError("boom")
+            model, "_pda_add_counted_quantities", side_effect=RuntimeError("boom")
         ):
             data, status = self._call(PDA_PAYLOAD)
         self.assertEqual((status, data["code"]), (500, "SERVER_ERROR"))
+        self.assertFalse(self._quant(self.other).inventory_quantity_set)
+
+    def test_stock_user_can_read_the_log(self):
+        self._call(PDA_PAYLOAD)
+        user = self.env["res.users"].create({
+            "name": "Almacén", "login": "almacen_pda_inv",
+            "group_ids": [(6, 0, [self.env.ref("stock.group_stock_user").id])],
+        })
+        logs = self._logs().with_user(user)
+        self.assertEqual(len(logs.read(["name", "quantity"])), 2)
+        self.assertEqual(self._quant(self.ref1).with_user(user).pda_log_count, 1)

@@ -10,6 +10,14 @@
                 <field name="pda_count_start" optional="hide" />
                 <field name="pda_count_end" optional="hide" />
                 <field name="pda_count_comment" optional="show" />
+                <field name="pda_log_count" string="Envíos PDA" optional="show" />
+                <button
+                    name="action_view_pda_logs"
+                    type="object"
+                    icon="fa-history"
+                    title="Envíos de la PDA de esta línea"
+                    invisible="not pda_count_origin"
+                />
             </field>
         </field>
     </record>
@@ -26,6 +34,9 @@
                     domain="[('pda_count_origin', '!=', False)]"
                 />
             </filter>
+            <field name="product_id" position="after">
+                <field name="pda_count_origin" />
+            </field>
         </field>
     </record>
 

@@ -1,6 +1,7 @@
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl-3.0)
 """Endpoint para recibir el inventario (recuento físico) de una tienda."""
 
+import hashlib
 import json
 import logging
 import math
@@ -106,7 +107,9 @@ class MatrizAlmontePdaInventoryController(http.Controller):
                 len(quantities),
                 self._summary(quantities),
             )
-            counts, warnings, skipped = self._resolve_products(quantities, company)
+            counts, warnings, skipped, refs = self._resolve_products(
+                quantities, company
+            )
             if not counts:
                 # Sin ningún artículo válido, poner a cero el resto vaciaría
                 # la tienda entera por un envío erróneo.
@@ -114,16 +117,47 @@ class MatrizAlmontePdaInventoryController(http.Controller):
                     "Ninguna referencia del recuento se puede inventariar en "
                     "Odoo: no se registra nada."
                 )
-            count_id, count_name = self._next_count_number()
+            location = warehouse.lot_stock_id
             Quant = request.env["stock.quant"].with_company(company)
             user = token_rec.sale_user_id or request.env.user
-            origin = self._origin(count_name, token_rec)
+            payload_hash = self._payload_hash(quantities)
             with request.env.cr.savepoint():
-                quants = Quant._pda_set_counted_quantities(
-                    warehouse.lot_stock_id, counts, user, origin, info
+                # Un envío a la vez por ubicación: decide el número del
+                # inventario y suma sin pisarse con otra PDA de la tienda.
+                request.env.cr.execute(
+                    "SELECT id FROM stock_location WHERE id = %s FOR UPDATE",
+                    [location.id],
+                )
+                duplicate = self._find_duplicate(token_rec, reference, payload_hash)
+                if duplicate:
+                    _logger.warning(
+                        "PDA inventario %s (%s): envío repetido, ya sumado a %s",
+                        reference,
+                        token_rec.name,
+                        duplicate.name,
+                    )
+                    return self._success(
+                        duplicate.name, warehouse, 0, 0, warnings, duplicate=True
+                    )
+                number = Quant._pda_current_inventory_number(location)
+                is_new = not number
+                if is_new:
+                    number = self._next_inventory_number()
+                quants = Quant._pda_add_counted_quantities(
+                    location,
+                    counts,
+                    user,
+                    number,
+                    info,
+                    {
+                        "token_id": token_rec.id,
+                        "pda_uuid": reference or False,
+                        "payload_hash": payload_hash,
+                        "refs": {product.id: ref for product, ref in refs.items()},
+                    },
                 )
                 zeroed = Quant._pda_zero_uncounted(
-                    warehouse.lot_stock_id, quants, skipped, user, origin, info
+                    location, quants, skipped, user, number, info
                 )
         except (UserError, ValidationError) as exc:
             _logger.warning("PDA inventario %s rechazado: %s", reference, exc)
@@ -135,29 +169,19 @@ class MatrizAlmontePdaInventoryController(http.Controller):
             )
 
         _logger.info(
-            "PDA inventario %s %s (%s): %s artículos contados y %s a cero en %s, "
+            "PDA inventario %s %s (%s): %s %s artículos sumados y %s a cero en %s, "
             "%s avisos",
-            count_name,
+            number,
             reference,
             token_rec.name,
+            "inventario nuevo," if is_new else "inventario abierto,",
             len(quants),
             len(zeroed.product_id),
             warehouse.name,
             len(warnings),
         )
-        return _json_response(
-            {
-                "success": True,
-                "order_id": count_id,
-                "order_name": count_name,
-                "message": "Inventario registrado",
-                "code": "INVENTORY_COUNTED",
-                "almacen": warehouse.name,
-                "ubicacion": warehouse.lot_stock_id.complete_name,
-                "articulos_contados": len(quants),
-                "articulos_a_cero": len(zeroed.product_id),
-                "avisos": warnings,
-            }
+        return self._success(
+            number, warehouse, len(quants), len(zeroed.product_id), warnings
         )
 
     # ------------------------------------------------------------------
@@ -165,8 +189,26 @@ class MatrizAlmontePdaInventoryController(http.Controller):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _next_count_number():
-        """Número del recuento recibido: ``(45, "INV/00045")``."""
+    def _success(number, warehouse, counted, zeroed, warnings, duplicate=False):
+        return _json_response(
+            {
+                "success": True,
+                "order_id": MatrizAlmontePdaInventoryController._number_id(number),
+                "order_name": number,
+                "message": "Inventario registrado",
+                "code": "INVENTORY_COUNTED",
+                "almacen": warehouse.name,
+                "ubicacion": warehouse.lot_stock_id.complete_name,
+                "articulos_contados": counted,
+                "articulos_a_cero": zeroed,
+                "duplicado": duplicate,
+                "avisos": warnings,
+            }
+        )
+
+    @staticmethod
+    def _next_inventory_number():
+        """Número nuevo de inventario: ``"INV/00045"``."""
         sequence = (
             request.env["ir.sequence"]
             .sudo()
@@ -174,14 +216,38 @@ class MatrizAlmontePdaInventoryController(http.Controller):
         )
         if not sequence:
             raise RuntimeError("Falta la secuencia %s" % SEQUENCE_CODE)
-        name = sequence._next()
-        number = re.search(r"(\d+)\D*$", name)
-        return (int(number.group(1)) if number else sequence.id), name
+        return sequence._next()
 
     @staticmethod
-    def _origin(count_name, token_rec):
-        """Referencia con la que se identifican los ajustes de este recuento."""
-        return "%s (PDA %s)" % (count_name, token_rec.name)
+    def _number_id(number):
+        """``"INV/00045"`` → ``45``."""
+        match = re.search(r"(\d+)\D*$", number or "")
+        return int(match.group(1)) if match else 0
+
+    @staticmethod
+    def _payload_hash(quantities):
+        """Huella de las líneas para reconocer un envío repetido."""
+        data = json.dumps(sorted(quantities.items()), separators=(",", ":"))
+        return hashlib.sha256(data.encode()).hexdigest()
+
+    @staticmethod
+    def _find_duplicate(token_rec, reference, payload_hash):
+        """Línea ya registrada del mismo envío (misma PDA, uuid y líneas).
+
+        Las PDA reintentan si no reciben la respuesta; sumar otra vez el mismo
+        envío duplicaría las unidades. Un uuid repetido con otras líneas se
+        trata como un envío nuevo.
+        """
+        if not reference:
+            return request.env["matriz.almonte.pda.inventory.log"]
+        return request.env["matriz.almonte.pda.inventory.log"].search(
+            [
+                ("token_id", "=", token_rec.id),
+                ("pda_uuid", "=", reference),
+                ("payload_hash", "=", payload_hash),
+            ],
+            limit=1,
+        )
 
     @staticmethod
     def _summary(quantities, limit=50):
@@ -326,7 +392,8 @@ class MatrizAlmontePdaInventoryController(http.Controller):
 
     @staticmethod
     def _resolve_products(quantities, company):
-        """Devuelve ``({product: unidades}, avisos, artículos_no_contados)``.
+        """Devuelve ``({product: unidades}, avisos, artículos_no_contados,
+        {product: referencia_enviada})``.
 
         Las referencias que no se pueden inventariar no bloquean el resto del
         recuento: se devuelven como avisos, y sus artículos (si existen) en
@@ -344,6 +411,7 @@ class MatrizAlmontePdaInventoryController(http.Controller):
         counts = {}
         warnings = []
         skipped = request.env["product.product"]
+        refs = {}
 
         def warn(ref, message, product=None):
             warnings.append(
@@ -366,7 +434,8 @@ class MatrizAlmontePdaInventoryController(http.Controller):
                 warn(ref, TRACKED, matches[0])
             else:
                 counts[matches[0]] = qty
+                refs[matches[0]] = ref
                 continue
             for product in matches:
                 skipped |= product
-        return counts, warnings, skipped
+        return counts, warnings, skipped, refs
